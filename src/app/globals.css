@@ -1,0 +1,41 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.primary-nav-content {
+  display: flex;
+  align-items: flex-end;
+  height: 56px;
+  padding: 0 16px;
+}
+
+.nav-fixed {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 2;
+}
+
+/* NavBar clearance only — gutters and vertical breathing room are on <Box>. */
+.content {
+  padding-top: 104px;
+}
+
+.card-fill {
+  height: 100%;
+}
+
+.card-fill [data-ds-id="Card"] {
+  height: 100%;
+}
