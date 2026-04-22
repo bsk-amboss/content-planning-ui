@@ -32,10 +32,39 @@ body {
   padding-top: 104px;
 }
 
+.content-inner {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+@media (min-width: 768px) {
+  .content-inner {
+    padding: 32px 24px 64px;
+  }
+}
+
+@media (min-width: 1200px) {
+  .content-inner {
+    padding: 48px 48px 96px;
+  }
+}
+
+.nav-placeholder {
+  height: 104px;
+  background: #fff;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
 .card-fill {
   height: 100%;
 }
 
 .card-fill [data-ds-id="Card"] {
   height: 100%;
+}
+
+.filter-cell {
+  flex: 0 0 200px;
+  min-width: 200px;
 }
