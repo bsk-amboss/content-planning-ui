@@ -1,13 +1,30 @@
 'use client';
 
 import { Badge, Callout, H1, Inline, Stack, Text } from '@amboss/design-system';
+import type { Backend } from '@/lib/data/specialties';
 import type { Specialty } from '@/lib/repositories/types';
 import { Breadcrumbs } from './breadcrumbs';
 import { ChangeSpecialtyButton } from './change-specialty-button';
 import { RefreshButton } from './refresh-button';
 import { SpecialtyTabs } from './specialty-tabs';
 
-export function SpecialtyHeader({ specialty }: { specialty: Specialty }) {
+const BACKEND_LABEL: Record<
+  Backend,
+  { text: string; color: 'green' | 'blue' | 'purple' }
+> = {
+  postgres: { text: 'Neon Postgres', color: 'purple' },
+  sheets: { text: 'Google Sheets', color: 'green' },
+  xlsx: { text: 'Local fixture', color: 'blue' },
+};
+
+export function SpecialtyHeader({
+  specialty,
+  backend,
+}: {
+  specialty: Specialty;
+  backend: Backend;
+}) {
+  const badge = BACKEND_LABEL[backend];
   return (
     <Stack space="l">
       <Breadcrumbs
@@ -19,15 +36,18 @@ export function SpecialtyHeader({ specialty }: { specialty: Specialty }) {
       />
       <Inline space="m" vAlignItems="center">
         <H1>{specialty.name}</H1>
-        <Badge
-          text={specialty.source === 'sheets' ? 'Google Sheets' : 'Local fixture'}
-          color={specialty.source === 'sheets' ? 'green' : 'blue'}
-        />
+        <Badge text={badge.text} color={badge.color} />
         <ChangeSpecialtyButton />
         <RefreshButton slug={specialty.slug} />
       </Inline>
       <Text color="secondary">
         Slug: <code>{specialty.slug}</code>
+        {backend === 'postgres' && specialty.source !== 'sheets' ? (
+          <>
+            {' '}
+            · seeded from {specialty.source === 'xlsx' ? 'local xlsx' : specialty.source}
+          </>
+        ) : null}
       </Text>
       <SpecialtyTabs slug={specialty.slug} />
     </Stack>

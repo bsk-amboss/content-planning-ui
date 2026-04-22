@@ -1,4 +1,4 @@
-import { getSpecialty } from '@/lib/data/specialties';
+import { getBackend, getSpecialty } from '@/lib/data/specialties';
 import { RememberSpecialty } from '../_components/remember-specialty';
 import { NotConfiguredView, SpecialtyHeader } from '../_components/specialty-header';
 
@@ -14,10 +14,12 @@ export default async function SpecialtyLayout({
 
   if (!specialty) return <NotConfiguredView slug={slug} />;
 
+  const backend = getBackend(specialty);
+
   return (
     <>
       <RememberSpecialty slug={slug} />
-      <SpecialtyHeader specialty={specialty} />
+      <SpecialtyHeader specialty={specialty} backend={backend} />
       {children}
     </>
   );

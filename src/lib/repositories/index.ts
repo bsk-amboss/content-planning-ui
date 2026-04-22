@@ -1,7 +1,9 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { env } from '@/env';
+import { hasDatabaseUrl } from '@/lib/db';
 import type { Repositories } from './interfaces';
+import { createPostgresRepos } from './postgres/repos';
 import { createSheetsRepos } from './sheets/repos';
 import type { Specialty } from './types';
 import { createXlsxRepos } from './xlsx/repos';
@@ -79,49 +81,64 @@ function combineSpecialties(
   return Array.from(bySlug.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-let cached: { repos: Repositories; specialties: Specialty[] } | null = null;
+let cached: { repos: Repositories; specialties: Specialty[]; mode: Mode } | null = null;
 
-export function getRepositories(): { repos: Repositories; specialties: Specialty[] } {
+type Mode = 'postgres' | 'legacy';
+
+export function getRepositories(): {
+  repos: Repositories;
+  specialties: Specialty[];
+  mode: Mode;
+} {
   if (cached) return cached;
+
   const sheetsRegistry = buildSheetsRegistry();
   const xlsxRegistry = buildXlsxRegistry();
-  const specialties = combineSpecialties(sheetsRegistry, xlsxRegistry);
-  const sheetsRepos = createSheetsRepos(sheetsRegistry);
-  const xlsxRepos = createXlsxRepos(xlsxRegistry);
+  const registrySpecialties = combineSpecialties(sheetsRegistry, xlsxRegistry);
 
-  const pick = <K extends keyof Repositories>(key: K, slug: string) => {
-    const sheetsHas = sheetsRegistry.some((s) => s.slug === slug);
-    return sheetsHas ? sheetsRepos[key] : xlsxRepos[key];
-  };
+  const mode: Mode = hasDatabaseUrl() ? 'postgres' : 'legacy';
 
-  const repos: Repositories = {
-    specialties: {
-      async list() {
-        return specialties;
+  let repos: Repositories;
+  if (mode === 'postgres') {
+    // Postgres is the sole backend when DATABASE_URL is set. Seeding is required
+    // before data appears; empty lists surface as empty tables in the UI.
+    repos = createPostgresRepos();
+  } else {
+    const sheetsRepos = createSheetsRepos(sheetsRegistry);
+    const xlsxRepos = createXlsxRepos(xlsxRegistry);
+    const pick = <K extends keyof Repositories>(key: K, slug: string) => {
+      const sheetsHas = sheetsRegistry.some((s) => s.slug === slug);
+      return sheetsHas ? sheetsRepos[key] : xlsxRepos[key];
+    };
+    repos = {
+      specialties: {
+        async list() {
+          return registrySpecialties;
+        },
+        async get(slug) {
+          return registrySpecialties.find((s) => s.slug === slug) ?? null;
+        },
       },
-      async get(slug: string) {
-        return specialties.find((s) => s.slug === slug) ?? null;
+      codes: { list: (slug) => pick('codes', slug).list(slug) },
+      categories: { list: (slug) => pick('categories', slug).list(slug) },
+      articles: {
+        listConsolidated: (slug) => pick('articles', slug).listConsolidated(slug),
+        listNew: (slug) => pick('articles', slug).listNew(slug),
+        listUpdates: (slug) => pick('articles', slug).listUpdates(slug),
       },
-    },
-    codes: { list: (slug) => pick('codes', slug).list(slug) },
-    categories: { list: (slug) => pick('categories', slug).list(slug) },
-    articles: {
-      listConsolidated: (slug) => pick('articles', slug).listConsolidated(slug),
-      listNew: (slug) => pick('articles', slug).listNew(slug),
-      listUpdates: (slug) => pick('articles', slug).listUpdates(slug),
-    },
-    sections: {
-      listConsolidated: (slug) => pick('sections', slug).listConsolidated(slug),
-    },
-    sources: {
-      icd10: (slug) => pick('sources', slug).icd10(slug),
-      hcup: (slug) => pick('sources', slug).hcup(slug),
-      abim: (slug) => pick('sources', slug).abim(slug),
-      orpha: (slug) => pick('sources', slug).orpha(slug),
-    },
-    stats: { get: (slug) => pick('stats', slug).get(slug) },
-  };
+      sections: {
+        listConsolidated: (slug) => pick('sections', slug).listConsolidated(slug),
+      },
+      sources: {
+        icd10: (slug) => pick('sources', slug).icd10(slug),
+        hcup: (slug) => pick('sources', slug).hcup(slug),
+        abim: (slug) => pick('sources', slug).abim(slug),
+        orpha: (slug) => pick('sources', slug).orpha(slug),
+      },
+      stats: { get: (slug) => pick('stats', slug).get(slug) },
+    };
+  }
 
-  cached = { repos, specialties };
+  cached = { repos, specialties: registrySpecialties, mode };
   return cached;
 }
