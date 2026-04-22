@@ -21,6 +21,10 @@ export const specialties = pgTable('specialties', {
   // Approved milestone set for this specialty. Populated by the preprocessing
   // pipeline once the user signs off. Draft versions live on pipeline_stages.
   milestones: jsonb('milestones'),
+  // Region/language optional; only identity columns live on the specialty.
+  // Per-run inputs (PDF URLs, system prompts) live on pipeline_runs.
+  region: text('region'),
+  language: text('language'),
 });
 
 const specialtyFk = () =>
@@ -278,6 +282,12 @@ export const pipelineRuns = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
     error: text('error'),
+    // Per-run inputs — captured when the user triggers a run. A single
+    // specialty can be re-extracted from a different set of PDFs without
+    // mutating its registry row.
+    contentOutlineUrls: jsonb('content_outline_urls'),
+    extractionSystemPrompt: text('extraction_system_prompt'),
+    milestonesSystemPrompt: text('milestones_system_prompt'),
   },
   (t) => [index('idx_pipeline_runs_specialty').on(t.specialtySlug)],
 );

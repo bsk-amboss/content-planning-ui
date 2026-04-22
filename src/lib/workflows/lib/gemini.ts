@@ -37,15 +37,72 @@ export function hasGeminiCreds(): boolean {
   return Boolean(env.GOOGLE_GENERATIVE_AI_API_KEY);
 }
 
+/**
+ * Phase 1 of the two-phase code extraction: identify module/chapter headings
+ * for a single PDF. Matches `content_outline_extractor_subworkflow.json` step 1
+ * in n8n. Returns one item per discovered module.
+ */
+export async function identifyModulesForUrl(input: {
+  url: string;
+  systemPrompt: string;
+  specialtySlug: string;
+}): Promise<{ category: string }[]> {
+  'use step';
+  console.log('[pipeline] identifyModulesForUrl', {
+    specialtySlug: input.specialtySlug,
+    url: input.url,
+    stubbed: !hasGeminiCreds(),
+  });
+  if (!hasGeminiCreds()) {
+    return [{ category: 'Stubbed Module A' }, { category: 'Stubbed Module B' }];
+  }
+  throw new Error(
+    'Real Gemini identifyModulesForUrl not yet wired — embed the n8n prompt + AI SDK generateObject call here.',
+  );
+}
+
+/**
+ * Phase 2: extract discrete medical items for one (url, category) pair.
+ * Matches `content_outline_category_extractor_subworkflow.json` in n8n.
+ * Returns `[{ category: hierarchical-pipe-separated-path, description }]`.
+ */
+export async function extractCodesForCategory(input: {
+  url: string;
+  category: string;
+  specialtySlug: string;
+  systemPrompt: string;
+}): Promise<{ category: string; description: string }[]> {
+  'use step';
+  console.log('[pipeline] extractCodesForCategory', {
+    specialtySlug: input.specialtySlug,
+    url: input.url,
+    category: input.category,
+    stubbed: !hasGeminiCreds(),
+  });
+  if (!hasGeminiCreds()) {
+    return [
+      { category: `${input.category} | Sub A`, description: 'Stubbed item 1' },
+      { category: `${input.category} | Sub B`, description: 'Stubbed item 2' },
+    ];
+  }
+  throw new Error(
+    'Real Gemini extractCodesForCategory not yet wired — embed the n8n prompt + AI SDK generateObject call here.',
+  );
+}
+
+/**
+ * @deprecated Superseded by the two-phase `identifyModulesForUrl` +
+ * `extractCodesForCategory` flow. Kept for any callers that still import it;
+ * remove once nothing references it.
+ */
 export async function extractCodesFromPdfs(input: {
   specialtySlug: string;
   pdfUrls: string[];
 }): Promise<RawExtractedCode[]> {
   'use step';
-  console.log('[pipeline] extractCodesFromPdfs', {
+  console.log('[pipeline] extractCodesFromPdfs (deprecated)', {
     specialtySlug: input.specialtySlug,
     pdfCount: input.pdfUrls.length,
-    stubbed: !hasGeminiCreds(),
   });
   if (!hasGeminiCreds()) {
     return [
@@ -55,23 +112,9 @@ export async function extractCodesFromPdfs(input: {
         description: 'Stubbed extracted code 1',
         source: 'stub',
       },
-      {
-        code: 'STUB.002',
-        category: 'Airway Management',
-        description: 'Stubbed extracted code 2',
-        source: 'stub',
-      },
-      {
-        code: 'STUB.003',
-        category: 'Cardiovascular',
-        description: 'Stubbed extracted code 3',
-        source: 'stub',
-      },
     ];
   }
-  throw new Error(
-    'Real Gemini code extraction not yet wired. Pass the n8n extract-codes workflow to flesh this out.',
-  );
+  throw new Error('extractCodesFromPdfs is deprecated — use the two-phase flow.');
 }
 
 export async function extractMilestonesFromPdfs(input: {

@@ -2,6 +2,7 @@
 
 import { Callout, Column, Columns, H1, H2, Stack, Text } from '@amboss/design-system';
 import type { Specialty } from '@/lib/repositories/types';
+import { AddSpecialtyForm } from './add-specialty-form';
 import { SpecialtyCard } from './specialty-card';
 import { SpecialtyEntry } from './specialty-entry';
 
@@ -20,7 +21,7 @@ export function HomeView({ specialties }: { specialties: Specialty[] }) {
         {specialties.length === 0 ? (
           <Callout
             type="info"
-            text="No specialties registered yet. Set MAPPING_SHEET_IDS in .env.local or place anesthesiology_mapping.xlsx at the project root."
+            text="No specialties registered yet. Add one below, or run `npm run db:import-board -- <slug>` to import from the board mapping xlsx."
           />
         ) : (
           <Columns gap="m" vAlignItems="stretch">
@@ -31,6 +32,15 @@ export function HomeView({ specialties }: { specialties: Specialty[] }) {
             ))}
           </Columns>
         )}
+      </Stack>
+
+      <Stack space="s">
+        <H2>Add a specialty</H2>
+        <Text color="secondary">
+          Only identity is needed here. Provide the PDF URLs when you start a code or
+          milestone extraction run.
+        </Text>
+        <AddSpecialtyForm />
       </Stack>
 
       {specialties.length > 0 && (
