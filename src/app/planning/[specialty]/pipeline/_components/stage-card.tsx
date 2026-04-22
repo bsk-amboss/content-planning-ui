@@ -4,6 +4,11 @@ import { Badge, Button, Card, CardBox, Inline, Stack, Text } from '@amboss/desig
 import { useState } from 'react';
 import type { PipelineEventRow, PipelineStageRow } from '@/lib/data/pipeline';
 import type { StageName } from '@/lib/workflows/lib/db-writes';
+import {
+  type CodeSource,
+  normalizeInputs,
+  sourceLabel,
+} from '@/lib/workflows/lib/sources';
 import { ApproveButton } from './approve-button';
 import { ResetButton } from './reset-button';
 
@@ -102,6 +107,113 @@ function formatTs(ts: Date | null | undefined): string | null {
   return new Date(ts).toLocaleString();
 }
 
+/**
+ * Browser for a sequence of per-call LLM completions. Each `events` entry has
+ * its parsed output stored on `metrics.completion`. Arrows step through; a
+ * counter shows N of M. Used for both Phase 1 (few) and Phase 2 (many) calls.
+ */
+function CompletionBrowser({
+  events,
+  renderLabel,
+  renderItem,
+  emptyLabel,
+}: {
+  events: PipelineEventRow[];
+  renderLabel: (event: PipelineEventRow) => string;
+  renderItem: (item: unknown, key: string) => React.ReactNode;
+  emptyLabel: string;
+}) {
+  const [index, setIndex] = useState(0);
+  if (events.length === 0) {
+    return <Text color="secondary">{emptyLabel}</Text>;
+  }
+  const clamped = Math.min(Math.max(0, index), events.length - 1);
+  const current = events[clamped];
+  const metrics = (current.metrics ?? {}) as Record<string, unknown>;
+  const completion = Array.isArray(metrics.completion) ? metrics.completion : [];
+  return (
+    <Stack space="xxs">
+      <Inline space="xs" vAlignItems="center">
+        <Button
+          type="button"
+          variant="tertiary"
+          disabled={clamped === 0}
+          onClick={() => setIndex(clamped - 1)}
+        >
+          ◀
+        </Button>
+        <Text color="secondary">
+          {clamped + 1} of {events.length}
+        </Text>
+        <Button
+          type="button"
+          variant="tertiary"
+          disabled={clamped === events.length - 1}
+          onClick={() => setIndex(clamped + 1)}
+        >
+          ▶
+        </Button>
+      </Inline>
+      <Text color="secondary">{renderLabel(current)}</Text>
+      <div
+        style={{
+          maxHeight: 320,
+          overflowY: 'auto',
+          background: 'var(--color-gray-50, #f8f8f8)',
+          border: '1px solid var(--color-gray-200, #e5e5e5)',
+          borderRadius: 4,
+          padding: 8,
+          fontSize: 12,
+          lineHeight: 1.5,
+        }}
+      >
+        {completion.map((item, i) => renderItem(item, `${current.id}-${i}`))}
+      </div>
+    </Stack>
+  );
+}
+
+function CollapsibleSubsection({
+  title,
+  defaultExpanded = false,
+  children,
+}: {
+  title: string;
+  defaultExpanded?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultExpanded);
+  return (
+    <Stack space="xxs">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          background: 'none',
+          border: 'none',
+          padding: 0,
+          cursor: 'pointer',
+          textAlign: 'left',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          font: 'inherit',
+          color: 'inherit',
+        }}
+      >
+        <span
+          aria-hidden
+          style={{ display: 'inline-block', width: 16, fontSize: 16, lineHeight: 1 }}
+        >
+          {open ? '▾' : '▸'}
+        </span>
+        <Text weight="bold">{title}</Text>
+      </button>
+      {open ? children : null}
+    </Stack>
+  );
+}
+
 function summaryPairs(summary: unknown): Array<[string, string]> {
   if (!summary || typeof summary !== 'object') return [];
   return Object.entries(summary as Record<string, unknown>).map(([k, v]) => [
@@ -118,15 +230,18 @@ export function StageCard({
   stageName,
   runUrls,
   events,
+  sources,
 }: {
   title: string;
   description?: string;
   stage: PipelineStageRow | null;
   specialtySlug: string;
   stageName: StageName;
-  runUrls?: string[];
+  runUrls?: unknown;
   events?: PipelineEventRow[];
+  sources?: CodeSource[];
 }) {
+  const runInputs = normalizeInputs(runUrls);
   const status = (stage?.status ?? 'pending') as StageStatus;
   const summary = summaryLine(stage?.outputSummary);
   const metrics = metricsLine(stage?.outputSummary);
@@ -142,7 +257,7 @@ export function StageCard({
       stage.draftPayload ||
       stage.startedAt ||
       stage.errorMessage ||
-      (runUrls && runUrls.length > 0) ||
+      runInputs.length > 0 ||
       evs.length > 0);
 
   return (
@@ -192,19 +307,88 @@ export function StageCard({
                     {stage.approvedBy ? ` by ${stage.approvedBy}` : ''}
                   </Text>
                 ) : null}
+                {(() => {
+                  const phase1 = evs.filter(
+                    (e) => (e.metrics as { phase?: string } | null)?.phase === 'identify',
+                  );
+                  const phase2 = evs.filter(
+                    (e) => (e.metrics as { phase?: string } | null)?.phase === 'extract',
+                  );
+                  if (phase1.length === 0 && phase2.length === 0) return null;
+                  return (
+                    <CollapsibleSubsection title="Output">
+                      <Stack space="s">
+                        <Stack space="xxs">
+                          <Text weight="bold">Phase 1 — Identify modules</Text>
+                          <CompletionBrowser
+                            events={phase1}
+                            emptyLabel="No Phase 1 completions yet."
+                            renderLabel={(e) => {
+                              const m = (e.metrics ?? {}) as Record<string, unknown>;
+                              return typeof m.url === 'string' ? m.url : '';
+                            }}
+                            renderItem={(item, key) => {
+                              const obj = (item ?? {}) as { category?: string };
+                              return (
+                                <div key={key} style={{ padding: '2px 0' }}>
+                                  {obj.category ?? String(item)}
+                                </div>
+                              );
+                            }}
+                          />
+                        </Stack>
+                        <Stack space="xxs">
+                          <Text weight="bold">Phase 2 — Extract codes</Text>
+                          <CompletionBrowser
+                            events={phase2}
+                            emptyLabel="No Phase 2 completions yet."
+                            renderLabel={(e) => {
+                              const m = (e.metrics ?? {}) as Record<string, unknown>;
+                              const url = typeof m.url === 'string' ? m.url : '';
+                              const cat =
+                                typeof m.category === 'string' ? m.category : '';
+                              return cat ? `${url} · ${cat}` : url;
+                            }}
+                            renderItem={(item, key) => {
+                              const obj = (item ?? {}) as {
+                                category?: string;
+                                description?: string;
+                              };
+                              return (
+                                <div
+                                  key={key}
+                                  style={{
+                                    padding: '4px 0',
+                                    borderBottom:
+                                      '1px solid var(--color-gray-200, #e5e5e5)',
+                                  }}
+                                >
+                                  <div style={{ fontWeight: 'bold' }}>
+                                    {obj.description ?? ''}
+                                  </div>
+                                  <div style={{ color: '#737373' }}>
+                                    {obj.category ?? ''}
+                                  </div>
+                                </div>
+                              );
+                            }}
+                          />
+                        </Stack>
+                      </Stack>
+                    </CollapsibleSubsection>
+                  );
+                })()}
                 {summaryPairs(stage.outputSummary).length > 0 ? (
-                  <Stack space="xxs">
-                    <Text weight="bold">Output</Text>
+                  <CollapsibleSubsection title="Metadata">
                     {summaryPairs(stage.outputSummary).map(([k, v]) => (
                       <Text key={k} color="secondary">
                         {k}: {v}
                       </Text>
                     ))}
-                  </Stack>
+                  </CollapsibleSubsection>
                 ) : null}
                 {summaryPairs(stage.draftPayload).length > 0 ? (
-                  <Stack space="xxs">
-                    <Text weight="bold">Draft</Text>
+                  <CollapsibleSubsection title="Draft">
                     <pre
                       style={{
                         background: 'var(--color-gray-50, #f5f5f5)',
@@ -216,21 +400,19 @@ export function StageCard({
                     >
                       {JSON.stringify(stage.draftPayload, null, 2)}
                     </pre>
-                  </Stack>
+                  </CollapsibleSubsection>
                 ) : null}
-                {runUrls && runUrls.length > 0 ? (
-                  <Stack space="xxs">
-                    <Text weight="bold">Input URLs</Text>
-                    {runUrls.map((u) => (
-                      <Text key={u} color="secondary">
-                        {u}
+                {runInputs.length > 0 ? (
+                  <CollapsibleSubsection title="Inputs">
+                    {runInputs.map((inp) => (
+                      <Text key={inp.url} color="secondary">
+                        [{sourceLabel(inp.source, sources)}] {inp.url}
                       </Text>
                     ))}
-                  </Stack>
+                  </CollapsibleSubsection>
                 ) : null}
                 {evs.length > 0 ? (
-                  <Stack space="xxs">
-                    <Text weight="bold">Log · {evs.length} events</Text>
+                  <CollapsibleSubsection title={`Log · ${evs.length} events`}>
                     <div
                       style={{
                         maxHeight: 320,
@@ -285,7 +467,7 @@ export function StageCard({
                         );
                       })}
                     </div>
-                  </Stack>
+                  </CollapsibleSubsection>
                 ) : null}
               </Stack>
             ) : null}

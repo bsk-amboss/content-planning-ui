@@ -20,6 +20,9 @@ import { env } from '@/env';
 import type { StageName } from './db-writes';
 import { logEvent } from './events';
 import { estimateCostUsd } from './pricing';
+import { DEFAULT_EXTRACT_SYSTEM_PROMPT, DEFAULT_IDENTIFY_SYSTEM_PROMPT } from './prompts';
+
+export { DEFAULT_EXTRACT_SYSTEM_PROMPT, DEFAULT_IDENTIFY_SYSTEM_PROMPT };
 
 const MODEL_ID = 'gemini-3.1-pro-preview';
 
@@ -57,46 +60,19 @@ export function hasGeminiCreds(): boolean {
   return Boolean(env.GOOGLE_GENERATIVE_AI_API_KEY);
 }
 
-// --- n8n-sourced system prompts --------------------------------------------
+// Prompt composition helper shared by both phase steps.
 
-const DEFAULT_IDENTIFY_SYSTEM_PROMPT = `
-You are a medical education content extraction specialist. Each URL context will provide you a content outline for that specialty.
-
-You need to identify the unique chapters to chunk the content outline. These chunks are needed to break down the document to later extract the medical items from the document. These should correspond to logical hierarchies in the document, to break up the task to make it more manageable. You should return a list of categories, without it being too granular or too wide. The categories should be based on the hierarchies in the document and will be used in a subsequent step to loop over each category for item extraction.
-
-CRITICAL: the list of categories must be exhaustive so that ALL items can be extracted when looping over the document! Make sure to scan the entire document and not only the table of contents!
-
-You must return exclusively a JSON array with no preceding or trailing text with the following information for each item:
-[
-  {
-    "category": "the base category"
-  }
-]
-`.trim();
-
-const DEFAULT_EXTRACT_SYSTEM_PROMPT = `
-You are a medical education content extraction specialist.
-
-The user will provide you with:
-- content outline URL
-- chunk
-
-Your job is to load the URL context provided and extract the medical items and hierarchy from the document for the given chunk. Each URL context will provide you a content outline for that specialty. Be extremely deliberate, even if it means extracting hundreds if not thousands of items for that chunk. Return exclusively codes in the chunk and none outside!
-
-Each description should be a discrete term in the hierarchy. For example, 'Diagnose and manage allergic rhinitis and allergic conjunctivitis' should be separate for each disease.
-
-Extract all diseases, symptoms, problems, conditions, diagnostic tools, clinical skills, and procedures mentioned in the document chunk. Each item must be discrete and descriptive and have all the information it needs to be contextualized. Extract every piece of the hierarchy as well as its own item.
-
-For each extraction, return the full medical category or all relevant hierarchy ancestors of the code. This should be a medical subcategory, not a classification like 'disease' or 'condition'. Good examples would be something like 'Cutaneous Disorders' or 'Procedures and Skills Integral to the Practice of Emergency Medicine'. If there are many categories or deeply nested ones in a hierarchy, return them all.
-
-You must return exclusively a JSON with no preceding or trailing text with the following information for each item:
-[
-  {
-    "category": "the category including all hierarchical information. Separate each hierarchy using a pipe separator |",
-    "description": "the item"
-  }
-]
-`.trim();
+/**
+ * Compose the effective system prompt: default, optionally followed by an
+ * `## Additional instructions` block when the caller supplied extra guidance.
+ * This lets the UI expose lightweight per-phase overrides without forcing
+ * users to replace the whole n8n-sourced prompt.
+ */
+function composePrompt(defaultPrompt: string, additional?: string): string {
+  const extra = additional?.trim();
+  if (!extra) return defaultPrompt;
+  return `${defaultPrompt}\n\n## Additional instructions\n\n${extra}`;
+}
 
 // --- parsing helpers --------------------------------------------------------
 
@@ -115,7 +91,8 @@ function parseJsonArray(raw: string): unknown {
 
 export async function identifyModulesForUrl(input: {
   url: string;
-  systemPrompt: string;
+  source?: string;
+  additionalInstructions?: string;
   specialtySlug: string;
   runId: string;
   stage: StageName;
@@ -124,6 +101,7 @@ export async function identifyModulesForUrl(input: {
   console.log('[pipeline] identifyModulesForUrl', {
     specialtySlug: input.specialtySlug,
     url: input.url,
+    source: input.source,
     stubbed: !hasGeminiCreds(),
   });
   if (!hasGeminiCreds()) {
@@ -132,12 +110,15 @@ export async function identifyModulesForUrl(input: {
       stage: input.stage,
       level: 'info',
       message: `Phase 1 (stub): identified 2 modules for ${input.url}`,
-      metrics: { url: input.url },
+      metrics: { url: input.url, source: input.source },
     });
     return [{ category: 'Stubbed Module A' }, { category: 'Stubbed Module B' }];
   }
 
-  const system = input.systemPrompt?.trim() || DEFAULT_IDENTIFY_SYSTEM_PROMPT;
+  const system = composePrompt(
+    DEFAULT_IDENTIFY_SYSTEM_PROMPT,
+    input.additionalInstructions,
+  );
   const userMessage = `
 Please load and analyze the content at the following URL(s):
 ${input.url}
@@ -150,7 +131,7 @@ Identify the base hierarchies in the document and return exclusively an output i
     stage: input.stage,
     level: 'info',
     message: `Phase 1: identifying modules for ${input.url}`,
-    metrics: { url: input.url, model: MODEL_ID },
+    metrics: { url: input.url, source: input.source, model: MODEL_ID },
   });
 
   const started = Date.now();
@@ -183,7 +164,16 @@ Identify the base hierarchies in the document and return exclusively an output i
       stage: input.stage,
       level: 'info',
       message: `Phase 1 done: ${modules.length} modules from ${input.url}`,
-      metrics: { durationMs, ...usage, costUsd, model: MODEL_ID, url: input.url },
+      metrics: {
+        durationMs,
+        ...usage,
+        costUsd,
+        model: MODEL_ID,
+        url: input.url,
+        source: input.source,
+        phase: 'identify',
+        completion: modules,
+      },
     });
     return modules;
   } catch (e) {
@@ -194,7 +184,7 @@ Identify the base hierarchies in the document and return exclusively an output i
       stage: input.stage,
       level: 'error',
       message: `Phase 1 failed for ${input.url}: ${msg}`,
-      metrics: { durationMs, url: input.url, model: MODEL_ID },
+      metrics: { durationMs, url: input.url, source: input.source, model: MODEL_ID },
     });
     throw e;
   }
@@ -204,9 +194,10 @@ Identify the base hierarchies in the document and return exclusively an output i
 
 export async function extractCodesForCategory(input: {
   url: string;
+  source?: string;
   category: string;
   specialtySlug: string;
-  systemPrompt: string;
+  additionalInstructions?: string;
   runId: string;
   stage: StageName;
 }): Promise<{ category: string; description: string }[]> {
@@ -214,6 +205,7 @@ export async function extractCodesForCategory(input: {
   console.log('[pipeline] extractCodesForCategory', {
     specialtySlug: input.specialtySlug,
     url: input.url,
+    source: input.source,
     category: input.category,
     stubbed: !hasGeminiCreds(),
   });
@@ -223,7 +215,7 @@ export async function extractCodesForCategory(input: {
       stage: input.stage,
       level: 'info',
       message: `Phase 2 (stub): extracted 2 items for ${input.category}`,
-      metrics: { url: input.url, category: input.category },
+      metrics: { url: input.url, source: input.source, category: input.category },
     });
     return [
       { category: `${input.category} | Sub A`, description: 'Stubbed item 1' },
@@ -231,7 +223,10 @@ export async function extractCodesForCategory(input: {
     ];
   }
 
-  const system = input.systemPrompt?.trim() || DEFAULT_EXTRACT_SYSTEM_PROMPT;
+  const system = composePrompt(
+    DEFAULT_EXTRACT_SYSTEM_PROMPT,
+    input.additionalInstructions,
+  );
   const userMessage = `
 You are extracting medical items for the medical specialty: ${input.specialtySlug}.
 
@@ -249,7 +244,12 @@ Extract all medical items from the document and return exclusively an output in 
     stage: input.stage,
     level: 'info',
     message: `Phase 2: extracting codes for (${input.category})`,
-    metrics: { url: input.url, category: input.category, model: MODEL_ID },
+    metrics: {
+      url: input.url,
+      source: input.source,
+      category: input.category,
+      model: MODEL_ID,
+    },
   });
 
   const started = Date.now();
@@ -288,7 +288,10 @@ Extract all medical items from the document and return exclusively an output in 
         costUsd,
         model: MODEL_ID,
         url: input.url,
+        source: input.source,
         category: input.category,
+        phase: 'extract',
+        completion: codes,
       },
     });
     return codes;
@@ -300,7 +303,13 @@ Extract all medical items from the document and return exclusively an output in 
       stage: input.stage,
       level: 'error',
       message: `Phase 2 failed for (${input.category}): ${msg}`,
-      metrics: { durationMs, url: input.url, category: input.category, model: MODEL_ID },
+      metrics: {
+        durationMs,
+        url: input.url,
+        source: input.source,
+        category: input.category,
+        model: MODEL_ID,
+      },
     });
     throw e;
   }

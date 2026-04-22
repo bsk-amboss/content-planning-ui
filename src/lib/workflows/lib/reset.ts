@@ -15,6 +15,7 @@ import {
   consolidatedSections,
   extractedCodes,
   newArticleSuggestions,
+  pipelineEvents,
   pipelineRuns,
   pipelineStages,
   specialties,
@@ -116,6 +117,11 @@ export async function resetStageCascade(input: {
   const toReset = stagesToReset(input.stage);
   for (const s of toReset) {
     await clearStageData(s, input.specialtySlug, input.runId);
+    // Purge the event log for this stage so the card's Log panel starts
+    // empty when the stage is re-run.
+    await db
+      .delete(pipelineEvents)
+      .where(and(eq(pipelineEvents.runId, input.runId), eq(pipelineEvents.stage, s)));
     await db
       .update(pipelineStages)
       .set({

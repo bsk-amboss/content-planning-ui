@@ -18,6 +18,8 @@ import type {
   PipelineStageRow,
 } from '@/lib/data/pipeline';
 import type { StageName } from '@/lib/workflows/lib/db-writes';
+import type { CodeSource } from '@/lib/workflows/lib/sources';
+import { CodeSourcesCard } from './code-sources-card';
 import { PhaseGroup } from './phase-group';
 import { StageCard } from './stage-card';
 import { StartRunForm } from './start-run-form';
@@ -36,11 +38,13 @@ export function PipelineDashboard({
   run,
   stages,
   events,
+  sources,
 }: {
   specialtySlug: string;
   run: PipelineRunRow | null;
   stages: StagesMap;
   events: PipelineEventRow[];
+  sources: CodeSource[];
 }) {
   const eventsByStage = new Map<StageName, PipelineEventRow[]>();
   for (const e of events) {
@@ -54,9 +58,8 @@ export function PipelineDashboard({
     run.status !== 'completed' &&
     run.status !== 'failed' &&
     run.status !== 'cancelled';
-  const runUrls = Array.isArray(run?.contentOutlineUrls)
-    ? (run.contentOutlineUrls as string[])
-    : undefined;
+  const runUrls = run?.contentOutlineUrls;
+  const extractCodesDone = stages.extract_codes?.status === 'completed';
   const [showStartForm, setShowStartForm] = useState(false);
   const router = useRouter();
 
@@ -81,19 +84,17 @@ export function PipelineDashboard({
       ) : null}
       {run?.error ? <Callout type="error" text={run.error} /> : null}
 
-      {!runActive ? (
+      {!runActive && !extractCodesDone ? (
         showStartForm ? (
           <Stack space="s">
             <Inline space="s" vAlignItems="center">
-              <H2>Start a new run</H2>
+              <H2>Extract codes</H2>
               <Button variant="secondary" onClick={() => setShowStartForm(false)}>
                 Cancel
               </Button>
             </Inline>
-            <Text color="secondary">
-              Provide URLs or upload PDFs. Milestone extraction uses the same inputs.
-            </Text>
-            <StartRunForm specialtySlug={specialtySlug} />
+            <Text color="secondary">Provide URLs or upload PDFs.</Text>
+            <StartRunForm specialtySlug={specialtySlug} sources={sources} />
           </Stack>
         ) : (
           <button
@@ -108,7 +109,7 @@ export function PipelineDashboard({
               width: '100%',
             }}
           >
-            <Card title="Start a new run" titleAs="h3">
+            <Card title="Extract codes" titleAs="h3">
               <CardBox>
                 <Text color="secondary">
                   Click to provide content outline URLs or upload PDFs for this run.
@@ -117,6 +118,17 @@ export function PipelineDashboard({
             </Card>
           </button>
         )
+      ) : null}
+
+      {!runActive && extractCodesDone ? (
+        <Card title="Next: Map codes" titleAs="h3">
+          <CardBox>
+            <Text color="secondary">
+              Per-code LLM + AMBOSS MCP lookup. Not yet implemented — this stage will run
+              once the mapping workflow is wired up.
+            </Text>
+          </CardBox>
+        </Card>
       ) : null}
 
       <PhaseGroup title="Preprocessing">
@@ -129,6 +141,7 @@ export function PipelineDashboard({
             stageName="extract_codes"
             runUrls={runUrls}
             events={eventsByStage.get('extract_codes') ?? []}
+            sources={sources}
           />
           <StageCard
             title="Extract milestones"
@@ -138,6 +151,7 @@ export function PipelineDashboard({
             stageName="extract_milestones"
             runUrls={runUrls}
             events={eventsByStage.get('extract_milestones') ?? []}
+            sources={sources}
           />
         </Stack>
       </PhaseGroup>
@@ -181,6 +195,8 @@ export function PipelineDashboard({
           />
         </Stack>
       </PhaseGroup>
+
+      <CodeSourcesCard sources={sources} />
     </Stack>
   );
 }

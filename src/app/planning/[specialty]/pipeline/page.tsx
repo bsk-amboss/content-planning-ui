@@ -1,4 +1,5 @@
 import { Suspense } from 'react';
+import { listCodeSources } from '@/lib/data/code-sources';
 import {
   getCurrentPipelineRun,
   listPipelineEvents,
@@ -27,7 +28,10 @@ export default async function PipelinePage({
 }
 
 async function PipelineData({ slug }: { slug: string }) {
-  const run = await getCurrentPipelineRun(slug);
+  const [run, sources] = await Promise.all([
+    getCurrentPipelineRun(slug),
+    listCodeSources(),
+  ]);
   const [stages, events] = run
     ? await Promise.all([
         listPipelineStages(run.id, slug),
@@ -40,6 +44,7 @@ async function PipelineData({ slug }: { slug: string }) {
       specialtySlug={slug}
       run={run}
       events={events}
+      sources={sources.map((s) => ({ slug: s.slug, name: s.name }))}
       stages={{
         extract_codes: pickStage(stages, 'extract_codes'),
         extract_milestones: pickStage(stages, 'extract_milestones'),

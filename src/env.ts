@@ -51,6 +51,7 @@ export const env = createEnv({
     AMBOSS_MCP_TOKEN: optionalString,
     GOOGLE_GENERATIVE_AI_API_KEY: optionalString,
     BLOB_READ_WRITE_TOKEN: optionalString,
+    INTERNAL_REVALIDATE_SECRET: optionalString,
   },
   client: {},
   runtimeEnv: {
@@ -69,6 +70,7 @@ export const env = createEnv({
     AMBOSS_MCP_TOKEN: process.env.AMBOSS_MCP_TOKEN,
     GOOGLE_GENERATIVE_AI_API_KEY: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
     BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN,
+    INTERNAL_REVALIDATE_SECRET: process.env.INTERNAL_REVALIDATE_SECRET,
   },
   emptyStringAsUndefined: true,
 });

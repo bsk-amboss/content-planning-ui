@@ -23,7 +23,15 @@ export type EventMetrics = {
   costUsd?: number | null;
   model?: string;
   url?: string;
+  source?: string;
   category?: string;
+  /** Which preprocessing sub-step produced the event — so the UI can split
+   *  completions into "Identify modules" vs "Extract codes" buckets. */
+  phase?: 'identify' | 'extract';
+  /** Raw parsed LLM output for this call. Array of `{ category }` for
+   *  `identify` events; array of `{ category, description }` for `extract`
+   *  events. Stored verbatim so the UI can render the actual completions. */
+  completion?: unknown;
 };
 
 export async function logEvent(input: {

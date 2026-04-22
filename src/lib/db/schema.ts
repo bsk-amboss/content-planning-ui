@@ -11,6 +11,19 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
+/**
+ * Code sources registry — used as the prefix when generating codes (e.g. `ab_…`,
+ * `orphanet_…`, `icd10_…`). Seeded with the n8n-era defaults, but users can
+ * add more from the pipeline dashboard so the start-run form's source
+ * dropdown stays flexible.
+ */
+export const codeSources = pgTable('code_sources', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  slug: text('slug').notNull().unique(),
+  name: text('name').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const specialties = pgTable('specialties', {
   slug: text('slug').primaryKey(),
   name: text('name').notNull(),
@@ -286,7 +299,8 @@ export const pipelineRuns = pgTable(
     // specialty can be re-extracted from a different set of PDFs without
     // mutating its registry row.
     contentOutlineUrls: jsonb('content_outline_urls'),
-    extractionSystemPrompt: text('extraction_system_prompt'),
+    identifyModulesInstructions: text('identify_modules_instructions'),
+    extractCodesInstructions: text('extract_codes_instructions'),
     milestonesSystemPrompt: text('milestones_system_prompt'),
   },
   (t) => [index('idx_pipeline_runs_specialty').on(t.specialtySlug)],

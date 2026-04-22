@@ -36,6 +36,20 @@
       "when": 1776882060346,
       "tag": "0004_graceful_weapon_omega",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1777180800000,
+      "tag": "0005_split_prompt_instructions",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777181000000,
+      "tag": "0006_code_sources",
+      "breakpoints": true
     }
   ]
 }

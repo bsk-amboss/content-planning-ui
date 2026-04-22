@@ -63,8 +63,11 @@ export async function POST(req: NextRequest) {
 
   if (body.specialtySlug) {
     revalidateTag(`pipeline:${body.specialtySlug}`, 'max');
+    revalidateTag(`codes:${body.specialtySlug}`, 'max');
+    revalidateTag(`specialty:${body.specialtySlug}`, 'max');
   }
   revalidateTag('specialty-phases', 'max');
+  revalidateTag('specialties', 'max');
 
   return NextResponse.json({ ok: true });
 }
