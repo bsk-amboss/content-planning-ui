@@ -47,6 +47,10 @@ export const env = createEnv({
     LOCAL_XLSX_FIXTURES: xlsxFixturesSchema,
     DATABASE_URL: optionalString,
     DATABASE_URL_UNPOOLED: optionalString,
+    AMBOSS_MCP_URL: z.string().url().optional(),
+    AMBOSS_MCP_TOKEN: optionalString,
+    GOOGLE_GENERATIVE_AI_API_KEY: optionalString,
+    BLOB_READ_WRITE_TOKEN: optionalString,
   },
   client: {},
   runtimeEnv: {
@@ -61,6 +65,10 @@ export const env = createEnv({
     DATABASE_URL: process.env.DATABASE_URL ?? process.env.STORAGE_DATABASE_URL,
     DATABASE_URL_UNPOOLED:
       process.env.DATABASE_URL_UNPOOLED ?? process.env.STORAGE_DATABASE_URL_UNPOOLED,
+    AMBOSS_MCP_URL: process.env.AMBOSS_MCP_URL,
+    AMBOSS_MCP_TOKEN: process.env.AMBOSS_MCP_TOKEN,
+    GOOGLE_GENERATIVE_AI_API_KEY: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+    BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN,
   },
   emptyStringAsUndefined: true,
 });
