@@ -8,6 +8,7 @@ import {
   serial,
   text,
   timestamp,
+  uuid,
 } from 'drizzle-orm/pg-core';
 
 export const specialties = pgTable('specialties', {
@@ -17,6 +18,9 @@ export const specialties = pgTable('specialties', {
   sheetId: text('sheet_id'),
   xlsxPath: text('xlsx_path'),
   lastSeededAt: timestamp('last_seeded_at', { withTimezone: true }),
+  // Approved milestone set for this specialty. Populated by the preprocessing
+  // pipeline once the user signs off. Draft versions live on pipeline_stages.
+  milestones: jsonb('milestones'),
 });
 
 const specialtyFk = () =>
@@ -257,6 +261,77 @@ export const orphaCodes = pgTable(
     count: integer('count'),
   },
   (t) => [index('idx_orpha_codes_specialty').on(t.specialtySlug)],
+);
+
+// --- Pipeline runs (Vercel Workflow DevKit) ---------------------------------
+
+export const pipelineRuns = pgTable(
+  'pipeline_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    specialtySlug: specialtyFk(),
+    // 'running' | 'awaiting_preprocessing_approval' | 'mapping' |
+    // 'consolidating' | 'completed' | 'failed' | 'cancelled'
+    status: text('status').notNull().default('running'),
+    workflowRunId: text('workflow_run_id'),
+    startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    error: text('error'),
+  },
+  (t) => [index('idx_pipeline_runs_specialty').on(t.specialtySlug)],
+);
+
+export const pipelineStages = pgTable(
+  'pipeline_stages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => pipelineRuns.id, { onDelete: 'cascade' }),
+    // 'extract_codes' | 'extract_milestones' | 'map_codes' |
+    // 'consolidate_primary' | 'consolidate_articles' | 'consolidate_sections'
+    stage: text('stage').notNull(),
+    // 'pending' | 'running' | 'awaiting_approval' | 'approved' |
+    // 'completed' | 'failed' | 'skipped'
+    status: text('status').notNull().default('pending'),
+    workflowRunId: text('workflow_run_id'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    approvedBy: text('approved_by'),
+    outputSummary: jsonb('output_summary'),
+    // Draft payload held here for small artifacts (e.g. milestone list) before
+    // approval. Large staging data lives in dedicated tables like
+    // extracted_codes.
+    draftPayload: jsonb('draft_payload'),
+    errorMessage: text('error_message'),
+  },
+  (t) => [
+    index('idx_pipeline_stages_run').on(t.runId),
+    index('idx_pipeline_stages_run_stage').on(t.runId, t.stage),
+  ],
+);
+
+export const extractedCodes = pgTable(
+  'extracted_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => pipelineRuns.id, { onDelete: 'cascade' }),
+    specialtySlug: specialtyFk(),
+    code: text('code').notNull(),
+    category: text('category'),
+    description: text('description'),
+    source: text('source'),
+    metadata: jsonb('metadata'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('idx_extracted_codes_run').on(t.runId),
+    index('idx_extracted_codes_specialty').on(t.specialtySlug),
+  ],
 );
 
 // --- Stats (summary rollup) --------------------------------------------------

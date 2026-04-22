@@ -21,6 +21,9 @@ async function main() {
     'abim_codes',
     'orpha_codes',
     'specialty_stats',
+    'pipeline_runs',
+    'pipeline_stages',
+    'extracted_codes',
   ];
   for (const t of tables) {
     const result = await db.execute<{ count: string }>(

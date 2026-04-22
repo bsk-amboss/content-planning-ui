@@ -10,7 +10,8 @@
       "!**/node_modules",
       "!**/*.tsbuildinfo",
       "!next-env.d.ts",
-      "!src/app/.well-known"
+      "!src/app/.well-known",
+      "!drizzle"
     ]
   },
   "formatter": {
