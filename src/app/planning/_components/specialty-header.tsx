@@ -2,6 +2,7 @@
 
 import { Badge, Callout, H1, Inline, Stack, Text } from '@amboss/design-system';
 import type { Backend } from '@/lib/data/specialties';
+import { PHASE_COLOR, PHASE_LABEL, type Phase } from '@/lib/phase';
 import type { Specialty } from '@/lib/repositories/types';
 import { Breadcrumbs } from './breadcrumbs';
 import { ChangeSpecialtyButton } from './change-specialty-button';
@@ -20,9 +21,11 @@ const BACKEND_LABEL: Record<
 export function SpecialtyHeader({
   specialty,
   backend,
+  phase,
 }: {
   specialty: Specialty;
   backend: Backend;
+  phase: Phase;
 }) {
   const badge = BACKEND_LABEL[backend];
   return (
@@ -37,6 +40,7 @@ export function SpecialtyHeader({
       <Inline space="m" vAlignItems="center">
         <H1>{specialty.name}</H1>
         <Badge text={badge.text} color={badge.color} />
+        <Badge text={PHASE_LABEL[phase]} color={PHASE_COLOR[phase]} />
         <ChangeSpecialtyButton />
         <RefreshButton slug={specialty.slug} />
       </Inline>

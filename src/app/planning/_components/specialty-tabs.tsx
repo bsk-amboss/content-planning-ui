@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 
 const TABS = [
   { label: 'Overview', segment: '' },
+  { label: 'Pipeline', segment: 'pipeline' },
   { label: 'Codes', segment: 'codes' },
   { label: 'Categories', segment: 'categories' },
   { label: 'Articles', segment: 'articles' },

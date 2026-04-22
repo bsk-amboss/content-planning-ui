@@ -19,6 +19,7 @@
  */
 
 import { eq } from 'drizzle-orm';
+import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
 import { start } from 'workflow/api';
 import { getDb } from '@/lib/db';
@@ -85,6 +86,9 @@ export async function POST(req: NextRequest) {
     .update(pipelineRuns)
     .set({ workflowRunId: wfRun.runId, updatedAt: new Date() })
     .where(eq(pipelineRuns.id, run.id));
+
+  revalidateTag(`pipeline:${slug}`, 'max');
+  revalidateTag('specialty-phases', 'max');
 
   return NextResponse.json({
     runId: run.id,

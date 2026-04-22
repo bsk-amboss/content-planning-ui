@@ -323,6 +323,27 @@ export const pipelineStages = pgTable(
   ],
 );
 
+export const pipelineEvents = pgTable(
+  'pipeline_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => pipelineRuns.id, { onDelete: 'cascade' }),
+    stage: text('stage').notNull(),
+    // 'info' | 'warn' | 'error'
+    level: text('level').notNull().default('info'),
+    message: text('message').notNull(),
+    // { durationMs, inputTokens, outputTokens, reasoningTokens, cachedInputTokens, costUsd, model, url?, category? }
+    metrics: jsonb('metrics'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('idx_pipeline_events_run').on(t.runId),
+    index('idx_pipeline_events_run_stage').on(t.runId, t.stage, t.createdAt),
+  ],
+);
+
 export const extractedCodes = pgTable(
   'extracted_codes',
   {

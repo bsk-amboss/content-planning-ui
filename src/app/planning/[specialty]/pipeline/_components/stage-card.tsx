@@ -1,0 +1,297 @@
+'use client';
+
+import { Badge, Button, Card, CardBox, Inline, Stack, Text } from '@amboss/design-system';
+import { useState } from 'react';
+import type { PipelineEventRow, PipelineStageRow } from '@/lib/data/pipeline';
+import type { StageName } from '@/lib/workflows/lib/db-writes';
+import { ApproveButton } from './approve-button';
+import { ResetButton } from './reset-button';
+
+type StageStatus =
+  | 'pending'
+  | 'running'
+  | 'awaiting_approval'
+  | 'approved'
+  | 'completed'
+  | 'failed'
+  | 'skipped';
+
+const STATUS_COLOR: Record<StageStatus, 'gray' | 'blue' | 'yellow' | 'green' | 'red'> = {
+  pending: 'gray',
+  running: 'blue',
+  awaiting_approval: 'yellow',
+  approved: 'green',
+  completed: 'green',
+  failed: 'red',
+  skipped: 'gray',
+};
+
+const STATUS_LABEL: Record<StageStatus, string> = {
+  pending: 'Pending',
+  running: 'Running',
+  awaiting_approval: 'Awaiting approval',
+  approved: 'Approved',
+  completed: 'Completed',
+  failed: 'Failed',
+  skipped: 'Skipped',
+};
+
+function summaryLine(summary: unknown): string | null {
+  if (!summary || typeof summary !== 'object') return null;
+  const s = summary as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof s.extracted === 'number') parts.push(`${s.extracted} extracted`);
+  if (typeof s.modules === 'number') parts.push(`${s.modules} modules`);
+  if (typeof s.pdfs === 'number') parts.push(`${s.pdfs} PDFs`);
+  if (parts.length === 0) return null;
+  return parts.join(' · ');
+}
+
+function formatMs(ms: unknown): string {
+  if (typeof ms !== 'number' || ms <= 0) return '—';
+  if (ms < 1000) return `${ms} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const min = Math.floor(ms / 60_000);
+  const sec = Math.round((ms % 60_000) / 1000);
+  return `${min}m ${sec}s`;
+}
+
+function formatTokens(n: unknown): string | null {
+  if (typeof n !== 'number' || n <= 0) return null;
+  if (n < 1000) return `${n}`;
+  return `${(n / 1000).toFixed(1)}k`;
+}
+
+function formatCost(usd: unknown): string | null {
+  if (typeof usd !== 'number') return null;
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
+function metricsLine(summary: unknown): string | null {
+  if (!summary || typeof summary !== 'object') return null;
+  const s = summary as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof s.apiCalls === 'number') parts.push(`${s.apiCalls} API calls`);
+  if (typeof s.durationMs === 'number') parts.push(formatMs(s.durationMs));
+  const cost = formatCost(s.costUsd);
+  if (cost) parts.push(cost);
+  const total =
+    (typeof s.inputTokens === 'number' ? s.inputTokens : 0) +
+    (typeof s.outputTokens === 'number' ? s.outputTokens : 0) +
+    (typeof s.reasoningTokens === 'number' ? s.reasoningTokens : 0);
+  const tokens = formatTokens(total);
+  if (tokens) parts.push(`${tokens} tokens`);
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+const LEVEL_ICON: Record<string, string> = {
+  info: '•',
+  warn: '⚠',
+  error: '✕',
+};
+
+const LEVEL_COLOR: Record<string, string> = {
+  info: 'inherit',
+  warn: 'var(--color-yellow-600, #a16207)',
+  error: 'var(--color-red-600, #dc2626)',
+};
+
+function formatTs(ts: Date | null | undefined): string | null {
+  if (!ts) return null;
+  return new Date(ts).toLocaleString();
+}
+
+function summaryPairs(summary: unknown): Array<[string, string]> {
+  if (!summary || typeof summary !== 'object') return [];
+  return Object.entries(summary as Record<string, unknown>).map(([k, v]) => [
+    k,
+    typeof v === 'object' ? JSON.stringify(v) : String(v),
+  ]);
+}
+
+export function StageCard({
+  title,
+  description,
+  stage,
+  specialtySlug,
+  stageName,
+  runUrls,
+  events,
+}: {
+  title: string;
+  description?: string;
+  stage: PipelineStageRow | null;
+  specialtySlug: string;
+  stageName: StageName;
+  runUrls?: string[];
+  events?: PipelineEventRow[];
+}) {
+  const status = (stage?.status ?? 'pending') as StageStatus;
+  const summary = summaryLine(stage?.outputSummary);
+  const metrics = metricsLine(stage?.outputSummary);
+  const approvable =
+    stage?.stage === 'extract_codes' || stage?.stage === 'extract_milestones';
+  const isTerminal =
+    status === 'completed' || status === 'failed' || status === 'skipped';
+  const [expanded, setExpanded] = useState(false);
+  const evs = events ?? [];
+  const hasDetails =
+    stage !== null &&
+    (stage.outputSummary ||
+      stage.draftPayload ||
+      stage.startedAt ||
+      stage.errorMessage ||
+      (runUrls && runUrls.length > 0) ||
+      evs.length > 0);
+
+  return (
+    <div className="card-fill">
+      <Card title={title} titleAs="h4">
+        <CardBox>
+          <Stack space="s">
+            <Badge text={STATUS_LABEL[status]} color={STATUS_COLOR[status]} />
+            {description ? <Text color="secondary">{description}</Text> : null}
+            {summary ? <Text>{summary}</Text> : null}
+            {metrics ? <Text color="secondary">{metrics}</Text> : null}
+            {status === 'failed' && stage?.errorMessage ? (
+              <Text color="secondary">{stage.errorMessage}</Text>
+            ) : null}
+            <Inline space="s" vAlignItems="center">
+              {hasDetails ? (
+                <Button variant="tertiary" onClick={() => setExpanded((x) => !x)}>
+                  {expanded ? 'Hide details' : 'Show details'}
+                </Button>
+              ) : null}
+              {status === 'awaiting_approval' && stage && approvable ? (
+                <ApproveButton
+                  runId={stage.runId}
+                  specialtySlug={specialtySlug}
+                  stage={stage.stage as 'extract_codes' | 'extract_milestones'}
+                />
+              ) : null}
+              {isTerminal && stage ? (
+                <ResetButton
+                  runId={stage.runId}
+                  specialtySlug={specialtySlug}
+                  stage={stageName}
+                />
+              ) : null}
+            </Inline>
+            {expanded && stage ? (
+              <Stack space="xs">
+                {formatTs(stage.startedAt) ? (
+                  <Text color="secondary">Started: {formatTs(stage.startedAt)}</Text>
+                ) : null}
+                {formatTs(stage.finishedAt) ? (
+                  <Text color="secondary">Finished: {formatTs(stage.finishedAt)}</Text>
+                ) : null}
+                {formatTs(stage.approvedAt) ? (
+                  <Text color="secondary">
+                    Approved: {formatTs(stage.approvedAt)}
+                    {stage.approvedBy ? ` by ${stage.approvedBy}` : ''}
+                  </Text>
+                ) : null}
+                {summaryPairs(stage.outputSummary).length > 0 ? (
+                  <Stack space="xxs">
+                    <Text weight="bold">Output</Text>
+                    {summaryPairs(stage.outputSummary).map(([k, v]) => (
+                      <Text key={k} color="secondary">
+                        {k}: {v}
+                      </Text>
+                    ))}
+                  </Stack>
+                ) : null}
+                {summaryPairs(stage.draftPayload).length > 0 ? (
+                  <Stack space="xxs">
+                    <Text weight="bold">Draft</Text>
+                    <pre
+                      style={{
+                        background: 'var(--color-gray-50, #f5f5f5)',
+                        padding: 8,
+                        fontSize: 12,
+                        overflow: 'auto',
+                        margin: 0,
+                      }}
+                    >
+                      {JSON.stringify(stage.draftPayload, null, 2)}
+                    </pre>
+                  </Stack>
+                ) : null}
+                {runUrls && runUrls.length > 0 ? (
+                  <Stack space="xxs">
+                    <Text weight="bold">Input URLs</Text>
+                    {runUrls.map((u) => (
+                      <Text key={u} color="secondary">
+                        {u}
+                      </Text>
+                    ))}
+                  </Stack>
+                ) : null}
+                {evs.length > 0 ? (
+                  <Stack space="xxs">
+                    <Text weight="bold">Log · {evs.length} events</Text>
+                    <div
+                      style={{
+                        maxHeight: 320,
+                        overflowY: 'auto',
+                        background: 'var(--color-gray-50, #f8f8f8)',
+                        border: '1px solid var(--color-gray-200, #e5e5e5)',
+                        borderRadius: 4,
+                        padding: 8,
+                        fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+                        fontSize: 12,
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {evs.map((e) => {
+                        const m = (e.metrics ?? {}) as Record<string, unknown>;
+                        const ts = new Date(e.createdAt).toLocaleTimeString();
+                        const metaParts: string[] = [];
+                        if (typeof m.durationMs === 'number') {
+                          metaParts.push(formatMs(m.durationMs));
+                        }
+                        const cost = formatCost(m.costUsd);
+                        if (cost) metaParts.push(cost);
+                        const total =
+                          (typeof m.inputTokens === 'number' ? m.inputTokens : 0) +
+                          (typeof m.outputTokens === 'number' ? m.outputTokens : 0) +
+                          (typeof m.reasoningTokens === 'number' ? m.reasoningTokens : 0);
+                        const tokens = formatTokens(total);
+                        if (tokens) metaParts.push(`${tokens} tokens`);
+                        return (
+                          <div
+                            key={e.id}
+                            style={{
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            }}
+                          >
+                            <span style={{ color: 'var(--color-gray-500, #737373)' }}>
+                              [{ts}]
+                            </span>{' '}
+                            <span style={{ color: LEVEL_COLOR[e.level] ?? 'inherit' }}>
+                              {LEVEL_ICON[e.level] ?? '•'}
+                            </span>{' '}
+                            {e.message}
+                            {metaParts.length > 0 ? (
+                              <span style={{ color: 'var(--color-gray-500, #737373)' }}>
+                                {' '}
+                                · {metaParts.join(' · ')}
+                              </span>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Stack>
+                ) : null}
+              </Stack>
+            ) : null}
+          </Stack>
+        </CardBox>
+      </Card>
+    </div>
+  );
+}

@@ -1,12 +1,19 @@
 'use client';
 
 import { Callout, Column, Columns, H1, H2, Stack, Text } from '@amboss/design-system';
+import type { Phase } from '@/lib/phase';
 import type { Specialty } from '@/lib/repositories/types';
 import { AddSpecialtyForm } from './add-specialty-form';
 import { SpecialtyCard } from './specialty-card';
 import { SpecialtyEntry } from './specialty-entry';
 
-export function HomeView({ specialties }: { specialties: Specialty[] }) {
+export function HomeView({
+  specialties,
+  phases,
+}: {
+  specialties: Specialty[];
+  phases: Record<string, Phase>;
+}) {
   return (
     <Stack space="xl">
       <Stack space="s">
@@ -27,7 +34,7 @@ export function HomeView({ specialties }: { specialties: Specialty[] }) {
           <Columns gap="m" vAlignItems="stretch">
             {specialties.map((s) => (
               <Column key={s.slug} size={[12, 6, 4]}>
-                <SpecialtyCard specialty={s} />
+                <SpecialtyCard specialty={s} phase={phases[s.slug]} />
               </Column>
             ))}
           </Columns>

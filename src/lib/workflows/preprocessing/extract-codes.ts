@@ -19,8 +19,10 @@ import {
   markStageFailed,
   markStageRunning,
   promoteExtractedCodesToCodes,
+  updatePipelineRunStatus,
   writeExtractedCodes,
 } from '../lib/db-writes';
+import { aggregateStageMetrics, logEvent } from '../lib/events';
 import { extractCodesForCategory, identifyModulesForUrl } from '../lib/gemini';
 import { chunk } from '../lib/util';
 
@@ -45,6 +47,12 @@ export async function extractCodesWorkflow(input: ExtractCodesInput) {
 
   try {
     await markStageRunning(input.runId, 'extract_codes');
+    await logEvent({
+      runId: input.runId,
+      stage: 'extract_codes',
+      level: 'info',
+      message: `Run started for ${input.contentOutlineUrls.length} URL(s)`,
+    });
 
     // Phase 1: identify modules per PDF URL, batched fan-out.
     const perUrlCategories: { url: string; category: string }[] = [];
@@ -55,6 +63,8 @@ export async function extractCodesWorkflow(input: ExtractCodesInput) {
             url,
             systemPrompt: input.systemPrompt,
             specialtySlug: input.specialtySlug,
+            runId: input.runId,
+            stage: 'extract_codes',
           }),
         ),
       );
@@ -63,6 +73,12 @@ export async function extractCodesWorkflow(input: ExtractCodesInput) {
           perUrlCategories.push({ url: batch[i], category: m.category });
       });
     }
+    await logEvent({
+      runId: input.runId,
+      stage: 'extract_codes',
+      level: 'info',
+      message: `Phase 1 complete: ${perUrlCategories.length} modules across ${input.contentOutlineUrls.length} URL(s). Starting Phase 2.`,
+    });
 
     // Phase 2: extract codes per (url, module), batched fan-out.
     const extracted: { category: string; description: string }[] = [];
@@ -74,6 +90,8 @@ export async function extractCodesWorkflow(input: ExtractCodesInput) {
             category: p.category,
             specialtySlug: input.specialtySlug,
             systemPrompt: input.systemPrompt,
+            runId: input.runId,
+            stage: 'extract_codes',
           }),
         ),
       );
@@ -92,10 +110,31 @@ export async function extractCodesWorkflow(input: ExtractCodesInput) {
       input.specialtySlug,
       rawCodes,
     );
+    const totals = await aggregateStageMetrics(input.runId, 'extract_codes');
     await markStageAwaitingApproval(input.runId, 'extract_codes', {
       extracted: inserted,
       pdfs: input.contentOutlineUrls.length,
       modules: perUrlCategories.length,
+      apiCalls: totals.apiCalls,
+      durationMs: totals.durationMs,
+      computeMs: totals.computeMs,
+      inputTokens: totals.inputTokens,
+      outputTokens: totals.outputTokens,
+      reasoningTokens: totals.reasoningTokens,
+      costUsd: totals.costUsd,
+    });
+    await logEvent({
+      runId: input.runId,
+      stage: 'extract_codes',
+      level: 'info',
+      message: `Extraction complete. Awaiting approval — ${inserted} codes staged.`,
+      metrics: {
+        durationMs: totals.durationMs ?? undefined,
+        inputTokens: totals.inputTokens,
+        outputTokens: totals.outputTokens,
+        reasoningTokens: totals.reasoningTokens,
+        costUsd: totals.costUsd,
+      },
     });
 
     using hook = createHook<ApprovalPayload>({
@@ -111,10 +150,15 @@ export async function extractCodesWorkflow(input: ExtractCodesInput) {
 
     await promoteExtractedCodesToCodes(input.runId, input.specialtySlug);
     await markStageCompleted(input.runId, 'extract_codes', approval.approvedBy);
+    // Single-stage pipeline for now — finalize the run so the UI stops showing
+    // it as active. When the preprocessing orchestrator + mapping/consolidation
+    // workflows land, this will move to the top-level orchestrator instead.
+    await updatePipelineRunStatus(input.runId, 'completed');
   } catch (e) {
     if (e instanceof FatalError) throw e;
     const msg = e instanceof Error ? e.message : String(e);
     await markStageFailed(input.runId, 'extract_codes', msg);
+    await updatePipelineRunStatus(input.runId, 'failed', msg);
     throw e;
   }
 }

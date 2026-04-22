@@ -1,4 +1,7 @@
+import { Suspense } from 'react';
+import { getCurrentPipelineRun } from '@/lib/data/pipeline';
 import { getBackend, getSpecialty } from '@/lib/data/specialties';
+import { derivePhase } from '@/lib/phase';
 import { RememberSpecialty } from '../_components/remember-specialty';
 import { NotConfiguredView, SpecialtyHeader } from '../_components/specialty-header';
 
@@ -10,17 +13,24 @@ export default async function SpecialtyLayout({
   params: Promise<{ specialty: string }>;
 }) {
   const { specialty: slug } = await params;
-  const specialty = await getSpecialty(slug);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+      <RememberSpecialty slug={slug} />
+      <Suspense fallback={null}>
+        <SpecialtyHeaderData slug={slug} />
+      </Suspense>
+      {children}
+    </div>
+  );
+}
 
+async function SpecialtyHeaderData({ slug }: { slug: string }) {
+  const specialty = await getSpecialty(slug);
   if (!specialty) return <NotConfiguredView slug={slug} />;
 
   const backend = getBackend(specialty);
+  const run = await getCurrentPipelineRun(slug);
+  const phase = derivePhase(run);
 
-  return (
-    <>
-      <RememberSpecialty slug={slug} />
-      <SpecialtyHeader specialty={specialty} backend={backend} />
-      {children}
-    </>
-  );
+  return <SpecialtyHeader specialty={specialty} backend={backend} phase={phase} />;
 }
