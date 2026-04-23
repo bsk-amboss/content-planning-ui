@@ -6,7 +6,7 @@
  * the paused workflow without ever having to look up the hook directly.
  */
 
-export type ApprovableStage = 'extract_codes' | 'extract_milestones';
+export type ApprovableStage = 'extract_codes' | 'extract_milestones' | 'map_codes';
 
 export type ApprovalPayload = {
   approved: boolean;

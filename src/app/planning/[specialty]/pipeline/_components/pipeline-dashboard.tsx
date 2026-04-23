@@ -12,12 +12,15 @@ import {
 } from '@amboss/design-system';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import type { AmbossLibraryStats } from '@/lib/data/amboss-library';
+import type { CodeCategorySummary, UnmappedCodePickerRow } from '@/lib/data/codes';
 import type { PipelineRunRow, StageContext } from '@/lib/data/pipeline';
 import type { StageName } from '@/lib/workflows/lib/db-writes';
 import type { CodeSource } from '@/lib/workflows/lib/sources';
 import { PhaseGroup } from './phase-group';
 import { SourcesCard } from './sources-card';
 import { StageCard } from './stage-card';
+import { StartMapCodesForm } from './start-map-codes-form';
 import { StartMilestonesForm } from './start-milestones-form';
 import { StartRunForm } from './start-run-form';
 
@@ -29,12 +32,22 @@ export function PipelineDashboard({
   stages,
   sources,
   milestoneSources,
+  unmappedCodeCount,
+  defaultContentBase,
+  libraryStats,
+  codeCategories,
+  unmappedCodePicker,
 }: {
   specialtySlug: string;
   run: PipelineRunRow | null;
   stages: StagesMap;
   sources: CodeSource[];
   milestoneSources: CodeSource[];
+  unmappedCodeCount: number;
+  defaultContentBase: string;
+  libraryStats: AmbossLibraryStats;
+  codeCategories: CodeCategorySummary[];
+  unmappedCodePicker: UnmappedCodePickerRow[];
 }) {
   const runActive =
     run !== null &&
@@ -43,8 +56,14 @@ export function PipelineDashboard({
     run.status !== 'cancelled';
   const extractCodesDone = stages.extract_codes?.stage.status === 'completed';
   const extractMilestonesDone = stages.extract_milestones?.stage.status === 'completed';
+  // "Is mapping complete for the specialty?" isn't the same as "did the last
+  // map_codes run finish" — sequential runs are allowed, each handling a
+  // subset of codes. The right signal is whether any codes are still
+  // unmapped. When none are, we fall through to the consolidation placeholder.
+  const hasUnmappedCodes = unmappedCodeCount > 0;
   const [showStartForm, setShowStartForm] = useState(false);
   const [showMilestonesForm, setShowMilestonesForm] = useState(false);
+  const [showMapForm, setShowMapForm] = useState(false);
   const router = useRouter();
 
   // While a run is active, poll the server for fresh stage/run data every 2s
@@ -76,10 +95,24 @@ export function PipelineDashboard({
           //      Approve/Reject buttons are right there.
           //   2. A run is mid-flight → info callout (nothing to action).
           //   3. Preprocessing incomplete → the corresponding start CTA.
-          //   4. Everything done → "Next: Map codes" placeholder.
+          //   4. Preprocessing done, mapping not run → mapping start CTA.
+          //   5. Mapping done → "Next: Consolidation" placeholder.
           const codesStatus = stages.extract_codes?.stage.status;
           const milestonesStatus = stages.extract_milestones?.stage.status;
+          const mapStatus = stages.map_codes?.stage.status;
 
+          if (mapStatus === 'awaiting_approval' && stages.map_codes) {
+            return (
+              <StageCard
+                title="Map codes"
+                description="Per-code LLM + AMBOSS MCP lookup. Review the mapped coverage + suggestions before approving."
+                stage={stages.map_codes.stage}
+                specialtySlug={specialtySlug}
+                stageName="map_codes"
+                events={stages.map_codes.events}
+              />
+            );
+          }
           if (codesStatus === 'awaiting_approval' && stages.extract_codes) {
             return (
               <StageCard
@@ -198,12 +231,54 @@ export function PipelineDashboard({
               </button>
             );
           }
+          if (hasUnmappedCodes) {
+            return showMapForm ? (
+              <Stack space="s">
+                <Inline space="s" vAlignItems="center">
+                  <H2>Map codes</H2>
+                  <Button variant="secondary" onClick={() => setShowMapForm(false)}>
+                    Cancel
+                  </Button>
+                </Inline>
+                <StartMapCodesForm
+                  specialtySlug={specialtySlug}
+                  unmappedCount={unmappedCodeCount}
+                  defaultContentBase={defaultContentBase}
+                  libraryStats={libraryStats}
+                  categories={codeCategories}
+                  unmappedCodes={unmappedCodePicker}
+                />
+              </Stack>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowMapForm(true)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  width: '100%',
+                }}
+              >
+                <Card title="Map codes" titleAs="h3">
+                  <CardBox>
+                    <Text color="secondary">
+                      {`Click to map ${unmappedCodeCount} unmapped code${unmappedCodeCount === 1 ? '' : 's'} against the AMBOSS MCP server. Sequential runs are allowed — the CTA reappears as long as any codes remain unmapped.`}
+                    </Text>
+                  </CardBox>
+                </Card>
+              </button>
+            );
+          }
           return (
-            <Card title="Next: Map codes" titleAs="h3">
+            <Card title="Next: Suggestion consolidation" titleAs="h3">
               <CardBox>
                 <Text color="secondary">
-                  Per-code LLM + AMBOSS MCP lookup. Not yet implemented — this stage will
-                  run once the mapping workflow is wired up.
+                  Combine code mappings into new-article and article-update candidates.
+                  Not yet implemented — this phase runs once the consolidation workflows
+                  are wired up.
                 </Text>
               </CardBox>
             </Card>

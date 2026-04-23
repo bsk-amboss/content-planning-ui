@@ -11,7 +11,7 @@ export function ApproveButton({
 }: {
   runId: string;
   specialtySlug: string;
-  stage: 'extract_codes' | 'extract_milestones';
+  stage: 'extract_codes' | 'extract_milestones' | 'map_codes';
 }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState<'approve' | 'reject' | null>(null);

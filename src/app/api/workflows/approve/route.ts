@@ -32,6 +32,7 @@ type Body = {
 const APPROVABLE_STAGES: ReadonlySet<ApprovableStage> = new Set([
   'extract_codes',
   'extract_milestones',
+  'map_codes',
 ]);
 
 export async function POST(req: NextRequest) {

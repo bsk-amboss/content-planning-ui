@@ -315,6 +315,16 @@ export const pipelineRuns = pgTable(
     identifyModulesInstructions: text('identify_modules_instructions'),
     extractCodesInstructions: text('extract_codes_instructions'),
     milestonesInstructions: text('milestones_instructions'),
+    mappingInstructions: text('mapping_instructions'),
+    mappingCheckIds: boolean('mapping_check_ids').notNull().default(true),
+    /**
+     * Optional filter applied to the map-codes workflow. Shape:
+     *   { categories?: string[]; codes?: string[] }
+     * When both are set, the workflow maps rows whose `category` is in
+     * `categories` OR whose `code` is in `codes`. Null / empty → map every
+     * unmapped code for the specialty.
+     */
+    mappingFilter: jsonb('mapping_filter'),
   },
   (t) => [index('idx_pipeline_runs_specialty').on(t.specialtySlug)],
 );
@@ -407,3 +417,30 @@ export const specialtyStats = pgTable('specialty_stats', {
   raw: jsonb('raw'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 });
+
+// --- AMBOSS article / section catalog ----------------------------------------
+//
+// Local mirror of the AMBOSS content library's canonical article + section IDs
+// so the mapping workflow can validate the IDs the LLM cites without
+// round-tripping the MCP server for every code. Refreshed from an external
+// JSON export (see `scripts/refresh-amboss-library.ts`); typically ~1.5k
+// articles + ~15k sections.
+export const ambossArticles = pgTable('amboss_articles', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  contentBase: text('content_base'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const ambossSections = pgTable(
+  'amboss_sections',
+  {
+    id: text('id').primaryKey(),
+    articleId: text('article_id')
+      .notNull()
+      .references(() => ambossArticles.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index('idx_amboss_sections_article').on(t.articleId)],
+);

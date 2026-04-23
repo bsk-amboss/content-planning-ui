@@ -50,6 +50,11 @@ function summaryLine(summary: unknown): string | null {
   if (typeof s.pdfs === 'number') parts.push(`${s.pdfs} PDFs`);
   if (typeof s.chars === 'number') parts.push(`${s.chars} chars`);
   if (typeof s.inputs === 'number') parts.push(`${s.inputs} inputs`);
+  if (typeof s.mapped === 'number') parts.push(`${s.mapped} mapped`);
+  if (typeof s.escalations === 'number' && s.escalations > 0)
+    parts.push(`${s.escalations} escalated`);
+  if (typeof s.invalidIdsRemaining === 'number' && s.invalidIdsRemaining > 0)
+    parts.push(`${s.invalidIdsRemaining} unresolved`);
   if (parts.length === 0) return null;
   return parts.join(' · ');
 }
@@ -118,11 +123,16 @@ function CompletionBrowser({
   events,
   renderLabel,
   renderItem,
+  renderRaw,
   emptyLabel,
 }: {
   events: PipelineEventRow[];
   renderLabel: (event: PipelineEventRow) => string;
   renderItem: (item: unknown, key: string) => React.ReactNode;
+  /** Optional: override the per-event body with a single custom renderer
+   *  (e.g. a JSON dump of the full completion). When provided, `renderItem`
+   *  is ignored. */
+  renderRaw?: (event: PipelineEventRow) => React.ReactNode;
   emptyLabel: string;
 }) {
   const [index, setIndex] = useState(0);
@@ -169,7 +179,9 @@ function CompletionBrowser({
           lineHeight: 1.5,
         }}
       >
-        {completion.map((item, i) => renderItem(item, `${current.id}-${i}`))}
+        {renderRaw
+          ? renderRaw(current)
+          : completion.map((item, i) => renderItem(item, `${current.id}-${i}`))}
       </div>
     </Stack>
   );
@@ -248,7 +260,9 @@ export function StageCard({
   const summary = summaryLine(stage?.outputSummary);
   const metrics = metricsLine(stage?.outputSummary);
   const approvable =
-    stage?.stage === 'extract_codes' || stage?.stage === 'extract_milestones';
+    stage?.stage === 'extract_codes' ||
+    stage?.stage === 'extract_milestones' ||
+    stage?.stage === 'map_codes';
   const isTerminal =
     status === 'completed' || status === 'failed' || status === 'skipped';
   const [expanded, setExpanded] = useState(false);
@@ -284,7 +298,9 @@ export function StageCard({
                 <ApproveButton
                   runId={stage.runId}
                   specialtySlug={specialtySlug}
-                  stage={stage.stage as 'extract_codes' | 'extract_milestones'}
+                  stage={
+                    stage.stage as 'extract_codes' | 'extract_milestones' | 'map_codes'
+                  }
                 />
               ) : null}
               {isTerminal && stage ? (
@@ -350,6 +366,60 @@ export function StageCard({
                         >
                           {text}
                         </pre>
+                      </CollapsibleSubsection>
+                    );
+                  }
+                  if (stage.stage === 'map_codes') {
+                    // Mapping: browse per-code completions. Each event carries
+                    // the per-code metadata (attempts, model, invalidIds) +
+                    // the full parsed mapping in `completion`.
+                    const mapEvents = evs.filter(
+                      (e) =>
+                        (e.metrics as { phase?: string } | null)?.phase === 'map' &&
+                        (e.metrics as { completion?: unknown } | null)?.completion,
+                    );
+                    if (mapEvents.length === 0) return null;
+                    return (
+                      <CollapsibleSubsection title="Output">
+                        <CompletionBrowser
+                          events={mapEvents}
+                          emptyLabel="No mapping completions yet."
+                          renderLabel={(e) => {
+                            const m = (e.metrics ?? {}) as Record<string, unknown>;
+                            const code = typeof m.code === 'string' ? m.code : '';
+                            const model = typeof m.model === 'string' ? m.model : '';
+                            const attempts =
+                              typeof m.attempts === 'number' ? m.attempts : null;
+                            const invalidCount = Array.isArray(m.invalidIds)
+                              ? m.invalidIds.length
+                              : 0;
+                            const tail = [
+                              model,
+                              attempts !== null ? `${attempts} attempts` : null,
+                              invalidCount > 0 ? `${invalidCount} invalid IDs` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ');
+                            return `${code}${tail ? ` — ${tail}` : ''}`;
+                          }}
+                          renderItem={() => null}
+                          renderRaw={(event) => {
+                            const m = (event.metrics ?? {}) as Record<string, unknown>;
+                            const mapping = m.completion;
+                            return (
+                              <pre
+                                style={{
+                                  margin: 0,
+                                  fontSize: 11,
+                                  lineHeight: 1.5,
+                                  whiteSpace: 'pre-wrap',
+                                }}
+                              >
+                                {JSON.stringify(mapping, null, 2)}
+                              </pre>
+                            );
+                          }}
+                        />
                       </CollapsibleSubsection>
                     );
                   }

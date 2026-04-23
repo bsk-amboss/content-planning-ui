@@ -25,15 +25,22 @@ export type EventMetrics = {
   url?: string;
   source?: string;
   category?: string;
-  /** Which preprocessing sub-step produced the event — so the UI can split
-   *  completions into "Identify modules" / "Extract codes" / "Milestones"
-   *  buckets. */
-  phase?: 'identify' | 'extract' | 'milestones';
+  /** Which sub-step produced the event — so the UI can split completions
+   *  into "Identify modules" / "Extract codes" / "Milestones" / "Map" buckets. */
+  phase?: 'identify' | 'extract' | 'milestones' | 'map';
   /** Raw parsed LLM output for this call. Array of `{ category }` for
    *  `identify` events; array of `{ category, description }` for `extract`
-   *  events; a plain string for `milestones` events. Stored verbatim so the UI
-   *  can render the actual completions. */
+   *  events; a plain string for `milestones` events; a `MappingOutput` object
+   *  for `map` events. Stored verbatim so the UI can render the actual
+   *  completions. */
   completion?: unknown;
+  /** Per-code metadata for `map` events — the code being processed, number of
+   *  attempts the retry ladder took, the model that eventually produced the
+   *  accepted (or last) mapping, and any article/section IDs still invalid
+   *  when the ladder exhausted. */
+  code?: string;
+  attempts?: number;
+  invalidIds?: string[];
 };
 
 export async function logEvent(input: {

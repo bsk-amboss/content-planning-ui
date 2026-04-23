@@ -6,7 +6,7 @@
  * DB directly — they call these helpers.
  */
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import {
   codes as codesTable,
@@ -15,6 +15,7 @@ import {
   pipelineStages,
   specialties,
 } from '@/lib/db/schema';
+import type { MappingOutput } from './amboss-mcp';
 import type { RawExtractedCode } from './gemini';
 
 export type PipelineRunStatus =
@@ -248,4 +249,141 @@ export async function writeApprovedMilestones(
     .update(specialties)
     .set({ milestones })
     .where(eq(specialties.slug, specialtySlug));
+}
+
+export type SpecialtyMappingContext = {
+  region: string | null;
+  language: string | null;
+  milestones: string | null;
+};
+
+/**
+ * One-shot fetch of the specialty fields the mapping workflow needs. Not
+ * cached — the workflow runs this as a step at startup, so the event log
+ * picks it up from the cached step value on replay.
+ */
+export async function loadSpecialtyForMapping(
+  specialtySlug: string,
+): Promise<SpecialtyMappingContext> {
+  'use step';
+  console.log('[pipeline] loadSpecialtyForMapping', { specialtySlug });
+  const db = getDb();
+  const [row] = await db
+    .select({
+      region: specialties.region,
+      language: specialties.language,
+      milestones: specialties.milestones,
+    })
+    .from(specialties)
+    .where(eq(specialties.slug, specialtySlug))
+    .limit(1);
+  return {
+    region: row?.region ?? null,
+    language: row?.language ?? null,
+    milestones: row?.milestones ?? null,
+  };
+}
+
+// --- codes (mapping writes) --------------------------------------------------
+
+export type UnmappedCodeRow = {
+  code: string;
+  category: string | null;
+  description: string | null;
+};
+
+/** Optional filter applied to the unmapped-codes query. */
+export type MappingFilter = {
+  /** Restrict to codes whose `category` is in this list. */
+  categories?: string[];
+  /** Restrict to specific `code` values (takes precedence when combined with
+   *  categories: both filters union — a row matches if it's in either list). */
+  codes?: string[];
+};
+
+/**
+ * All rows for a specialty that the mapping workflow hasn't touched yet
+ * (`isInAmboss IS NULL`), optionally narrowed to specific categories or
+ * individual codes. Kept in its own step so the mapping workflow's initial
+ * load replays from the event log on crash instead of re-querying.
+ */
+export async function listUnmappedCodes(
+  specialtySlug: string,
+  filter?: MappingFilter | null,
+): Promise<UnmappedCodeRow[]> {
+  'use step';
+  console.log('[pipeline] listUnmappedCodes', { specialtySlug, filter });
+  const db = getDb();
+  const catList = filter?.categories?.filter(
+    (s) => typeof s === 'string' && s.length > 0,
+  );
+  const codeList = filter?.codes?.filter((s) => typeof s === 'string' && s.length > 0);
+  const hasCat = Boolean(catList && catList.length > 0);
+  const hasCode = Boolean(codeList && codeList.length > 0);
+  const conditions = [
+    eq(codesTable.specialtySlug, specialtySlug),
+    isNull(codesTable.isInAmboss),
+  ];
+  // Use `inArray` (→ `IN (?, ?, ?)` with one bind per value) instead of
+  // `ANY($n)`. The neon-serverless / Drizzle pairing passes arrays to `ANY`
+  // incorrectly — values with embedded commas get split at the wire layer,
+  // which blows up on category strings like "Abuse, Neglect, and ...".
+  if (hasCat && hasCode && catList && codeList) {
+    const clause = or(
+      inArray(codesTable.category, catList),
+      inArray(codesTable.code, codeList),
+    );
+    if (clause) conditions.push(clause);
+  } else if (hasCat && catList) {
+    conditions.push(inArray(codesTable.category, catList));
+  } else if (hasCode && codeList) {
+    conditions.push(inArray(codesTable.code, codeList));
+  }
+  const rows = await db
+    .select({
+      code: codesTable.code,
+      category: codesTable.category,
+      description: codesTable.description,
+    })
+    .from(codesTable)
+    .where(and(...conditions));
+  console.log('[pipeline] listUnmappedCodes →', rows.length);
+  return rows;
+}
+
+/**
+ * Write-through of a single mapping into the canonical `codes` row. Called
+ * per-code from the mapping workflow immediately after the agent returns, so
+ * the Codes tab reflects progress live.
+ */
+export async function writeCodeMapping(
+  specialtySlug: string,
+  code: string,
+  mapping: MappingOutput,
+): Promise<void> {
+  'use step';
+  console.log('[pipeline] writeCodeMapping', { specialtySlug, code });
+  const db = getDb();
+  const coverageScore =
+    typeof mapping.coverage.coverageScore === 'number'
+      ? mapping.coverage.coverageScore
+      : typeof mapping.coverage.coverageScore === 'string'
+        ? Number.parseInt(mapping.coverage.coverageScore, 10) || null
+        : null;
+  await db
+    .update(codesTable)
+    .set({
+      isInAmboss: mapping.coverage.inAMBOSS ?? null,
+      articlesWhereCoverageIs: mapping.coverage.coveredSections ?? null,
+      notes: mapping.coverage.generalNotes || null,
+      gaps: mapping.coverage.gaps || null,
+      coverageLevel: mapping.coverage.coverageLevel || null,
+      depthOfCoverage: coverageScore,
+      existingArticleUpdates: mapping.suggestion.sectionUpdates ?? null,
+      newArticlesNeeded: mapping.suggestion.newArticlesNeeded ?? null,
+      improvements: mapping.suggestion.improvement || null,
+      metadata: mapping.currentAMBOSSContentMetadata ?? null,
+      fullJsonOutput: mapping as unknown as Record<string, unknown>,
+    })
+    .where(and(eq(codesTable.specialtySlug, specialtySlug), eq(codesTable.code, code)));
 }

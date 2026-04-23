@@ -1,0 +1,222 @@
+/**
+ * Map-codes workflow.
+ *
+ * Fans out per-code MCP agent calls with concurrency cap 10, writing each
+ * mapping through to the `codes` row as soon as it resolves. When every
+ * unmapped code is done, the stage pauses on an approval hook; on approve
+ * the run transitions to completed, on reject the reset cascade clears
+ * mapping fields so the user can rerun.
+ */
+
+import { createHook, FatalError } from 'workflow';
+import { mapAndValidateCode } from '../lib/amboss-mcp';
+import { type ApprovalPayload, approvalToken } from '../lib/approval';
+import {
+  listUnmappedCodes,
+  loadSpecialtyForMapping,
+  type MappingFilter,
+  markStageAwaitingApproval,
+  markStageCompleted,
+  markStageFailed,
+  markStageRunning,
+  updatePipelineRunStatus,
+  writeCodeMapping,
+} from '../lib/db-writes';
+import { aggregateStageMetrics, logEvent } from '../lib/events';
+import { revalidateSpecialtyCache } from '../lib/revalidate';
+import { chunk } from '../lib/util';
+
+const CODE_CONCURRENCY = 10;
+
+export type MapCodesInput = {
+  runId: string;
+  specialtySlug: string;
+  contentBase?: string;
+  language?: string;
+  additionalInstructions?: string;
+  checkAgainstLibrary: boolean;
+  /** Optional category/code filter applied to `listUnmappedCodes`. Null or
+   *  empty → map every unmapped code for the specialty. */
+  filter?: MappingFilter | null;
+};
+
+/**
+ * Derive a sensible `contentBase` label for the agent prompt when the caller
+ * didn't override it. n8n's convention: `US` / `German` strings (not `us` /
+ * `de` region slugs) — the LLM uses this verbatim in its prompt.
+ */
+function deriveContentBase(region: string | null): string {
+  if (region === 'us') return 'US';
+  if (region === 'de') return 'German';
+  return region ?? 'US';
+}
+
+function deriveLanguage(language: string | null): string {
+  return language || 'en';
+}
+
+/**
+ * Single step that wraps "map this code + persist the result" as one atomic
+ * unit in the event log. On crash, the workflow replays completed codes as
+ * cache hits and re-executes only whichever code was in flight.
+ */
+async function mapAndWriteOne(input: {
+  runId: string;
+  specialtySlug: string;
+  code: string;
+  description: string;
+  category: string;
+  specialty: string;
+  contentBase: string;
+  language: string;
+  milestones: string;
+  additionalInstructions?: string;
+  checkAgainstLibrary: boolean;
+}): Promise<{ code: string; attempts: number; model: string; unresolved: boolean }> {
+  'use step';
+  const result = await mapAndValidateCode({
+    code: input.code,
+    description: input.description,
+    category: input.category,
+    specialty: input.specialty,
+    contentBase: input.contentBase,
+    language: input.language,
+    milestones: input.milestones,
+    additionalInstructions: input.additionalInstructions,
+    checkAgainstLibrary: input.checkAgainstLibrary,
+    runId: input.runId,
+    stage: 'map_codes',
+  });
+  await writeCodeMapping(input.specialtySlug, input.code, result.mapping);
+  return {
+    code: input.code,
+    attempts: result.attempts,
+    model: result.model,
+    unresolved: result.unresolved,
+  };
+}
+
+export async function mapCodesWorkflow(input: MapCodesInput) {
+  'use workflow';
+
+  console.log('[pipeline] mapCodesWorkflow start', {
+    runId: input.runId,
+    specialtySlug: input.specialtySlug,
+    checkAgainstLibrary: input.checkAgainstLibrary,
+  });
+
+  try {
+    await markStageRunning(input.runId, 'map_codes');
+
+    const [spec, unmapped] = await Promise.all([
+      loadSpecialtyForMapping(input.specialtySlug),
+      listUnmappedCodes(input.specialtySlug, input.filter ?? null),
+    ]);
+    const contentBase = input.contentBase || deriveContentBase(spec.region);
+    const language = input.language || deriveLanguage(spec.language);
+    const milestones = spec.milestones ?? '';
+
+    await logEvent({
+      runId: input.runId,
+      stage: 'map_codes',
+      level: 'info',
+      message: `Run started for ${unmapped.length} unmapped code(s) · ${contentBase} · lang=${language}`,
+      metrics: {
+        model: 'mapper-ladder',
+      },
+    });
+
+    if (unmapped.length === 0) {
+      await markStageAwaitingApproval(input.runId, 'map_codes', {
+        mapped: 0,
+        codes: 0,
+        escalations: 0,
+        invalidIdsRemaining: 0,
+      });
+      await logEvent({
+        runId: input.runId,
+        stage: 'map_codes',
+        level: 'info',
+        message: 'Nothing to map — awaiting approval to close the stage.',
+      });
+    } else {
+      let escalations = 0;
+      let unresolvedCount = 0;
+      for (const batch of chunk(unmapped, CODE_CONCURRENCY)) {
+        const results = await Promise.all(
+          batch.map((c) =>
+            mapAndWriteOne({
+              runId: input.runId,
+              specialtySlug: input.specialtySlug,
+              code: c.code,
+              description: c.description ?? '',
+              category: c.category ?? '',
+              specialty: input.specialtySlug,
+              contentBase,
+              language,
+              milestones,
+              additionalInstructions: input.additionalInstructions,
+              checkAgainstLibrary: input.checkAgainstLibrary,
+            }),
+          ),
+        );
+        for (const r of results) {
+          if (r.model.startsWith('claude-')) escalations += 1;
+          if (r.unresolved) unresolvedCount += 1;
+        }
+      }
+
+      const totals = await aggregateStageMetrics(input.runId, 'map_codes');
+      await markStageAwaitingApproval(input.runId, 'map_codes', {
+        mapped: unmapped.length,
+        codes: unmapped.length,
+        escalations,
+        invalidIdsRemaining: unresolvedCount,
+        apiCalls: totals.apiCalls,
+        durationMs: totals.durationMs,
+        computeMs: totals.computeMs,
+        inputTokens: totals.inputTokens,
+        outputTokens: totals.outputTokens,
+        reasoningTokens: totals.reasoningTokens,
+        costUsd: totals.costUsd,
+      });
+      await logEvent({
+        runId: input.runId,
+        stage: 'map_codes',
+        level: 'info',
+        message: `Mapping complete. Awaiting approval — ${unmapped.length} codes · ${escalations} escalated · ${unresolvedCount} unresolved.`,
+        metrics: {
+          durationMs: totals.durationMs ?? undefined,
+          inputTokens: totals.inputTokens,
+          outputTokens: totals.outputTokens,
+          reasoningTokens: totals.reasoningTokens,
+          costUsd: totals.costUsd,
+        },
+      });
+    }
+
+    using hook = createHook<ApprovalPayload>({
+      token: approvalToken(input.runId, 'map_codes'),
+    });
+    const approval = await hook;
+
+    if (!approval.approved) {
+      const reason = approval.note ? `: ${approval.note}` : '';
+      await markStageFailed(input.runId, 'map_codes', `Rejected${reason}`);
+      await updatePipelineRunStatus(input.runId, 'failed');
+      await revalidateSpecialtyCache(input.specialtySlug);
+      throw new FatalError('Map codes rejected');
+    }
+
+    await markStageCompleted(input.runId, 'map_codes', approval.approvedBy);
+    await updatePipelineRunStatus(input.runId, 'completed');
+    await revalidateSpecialtyCache(input.specialtySlug);
+  } catch (e) {
+    if (e instanceof FatalError) throw e;
+    const msg = e instanceof Error ? e.message : String(e);
+    await markStageFailed(input.runId, 'map_codes', msg);
+    await updatePipelineRunStatus(input.runId, 'failed', msg);
+    await revalidateSpecialtyCache(input.specialtySlug);
+    throw e;
+  }
+}

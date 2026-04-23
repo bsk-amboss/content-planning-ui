@@ -19,10 +19,13 @@
     "db:studio": "dotenv -e .env.local -- drizzle-kit studio",
     "db:seed": "dotenv -e .env.local -- tsx scripts/seed-from-xlsx.ts",
     "db:import-board": "dotenv -e .env.local -- tsx scripts/import-board-mapping.ts",
+    "db:refresh-amboss-library": "dotenv -e .env.local -- tsx scripts/refresh-amboss-library.ts",
     "wf:extract": "dotenv -e .env.local -- tsx scripts/start-extract.ts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.71",
     "@ai-sdk/google": "^3.0.64",
+    "@ai-sdk/mcp": "^1.0.36",
     "@amboss/design-system": "^3.42.2",
     "@emotion/cache": "^11.14.0",
     "@emotion/is-prop-valid": "^1.4.0",
