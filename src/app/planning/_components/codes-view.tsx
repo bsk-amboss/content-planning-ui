@@ -18,21 +18,70 @@ function countSummary(code: Code) {
   return `${newArticles} new / ${updates} updates`;
 }
 
+// Coverage level has a natural rank (none < student < ... < specialist) that
+// we use for sort ordering, which lines up with how the model scores depth.
+const COVERAGE_RANK: Record<string, number> = {
+  none: 0,
+  student: 1,
+  'early-resident': 2,
+  'advanced-resident': 3,
+  attending: 4,
+  specialist: 5,
+};
+
+function suggestionsCount(code: Code): number {
+  return (
+    (code.newArticlesNeeded?.length ?? 0) + (code.existingArticleUpdates?.length ?? 0)
+  );
+}
+
 const columns: Column<Code>[] = [
-  { key: 'source', label: 'Source', render: (r) => r.source ?? '—', width: 80 },
-  { key: 'code', label: 'Code', render: (r) => <code>{r.code}</code>, width: 180 },
-  { key: 'description', label: 'Description', render: (r) => r.description ?? '' },
-  { key: 'category', label: 'Category', render: (r) => r.category ?? '—' },
+  {
+    key: 'source',
+    label: 'Source',
+    render: (r) => r.source ?? '—',
+    width: 80,
+    accessor: (r) => r.source ?? null,
+    type: 'string',
+  },
+  {
+    key: 'code',
+    label: 'Code',
+    render: (r) => <code>{r.code}</code>,
+    width: 180,
+    accessor: (r) => r.code ?? null,
+    type: 'string',
+  },
+  {
+    key: 'description',
+    label: 'Description',
+    render: (r) => r.description ?? '',
+    accessor: (r) => r.description ?? null,
+    type: 'string',
+  },
+  {
+    key: 'category',
+    label: 'Category',
+    render: (r) => r.category ?? '—',
+    accessor: (r) => r.category ?? null,
+    type: 'string',
+  },
   {
     key: 'consolidationCategory',
     label: 'Consolidation category',
     render: (r) => r.consolidationCategory ?? '—',
+    accessor: (r) => r.consolidationCategory ?? null,
+    type: 'string',
   },
   {
     key: 'coverage',
     label: 'Coverage',
     render: (r) => <CoverageBadge level={r.coverageLevel} />,
     width: 140,
+    // Sort as a number (rank) so asc/desc follow the coverage ladder rather
+    // than alphabetical order of the level label.
+    accessor: (r) => (r.coverageLevel ? (COVERAGE_RANK[r.coverageLevel] ?? -1) : null),
+    type: 'number',
   },
   {
     key: 'depth',
@@ -40,8 +89,21 @@ const columns: Column<Code>[] = [
     render: (r) => r.depthOfCoverage ?? '—',
     width: 60,
     align: 'right',
+    accessor: (r) => r.depthOfCoverage ?? null,
+    type: 'number',
+    filterable: true,
   },
-  { key: 'suggestions', label: 'Suggestions', render: countSummary, width: 140 },
+  {
+    key: 'suggestions',
+    label: 'Suggestions',
+    render: countSummary,
+    width: 140,
+    // Sort/filter by total suggestion count (new + updates) since the
+    // rendered string "N new / M updates" isn't comparable.
+    accessor: suggestionsCount,
+    type: 'number',
+    filterable: true,
+  },
 ];
 
 function uniqueStrings(values: (string | undefined)[]): string[] {
