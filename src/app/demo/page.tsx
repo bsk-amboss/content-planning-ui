@@ -20,7 +20,7 @@ export default function DemoPage() {
   return (
     <Stack space="m">
       <H2>Try it out</H2>
-      <Card title="Interactive demo" titleAs="h3">
+      <Card title="Interactive demo" titleAs="h3" outlined>
         <CardBox>
           <Stack space="m">
             <Text color="secondary">

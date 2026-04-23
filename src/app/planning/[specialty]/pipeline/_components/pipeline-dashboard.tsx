@@ -143,7 +143,7 @@ export function PipelineDashboard({
           }
           if (runActive) {
             return (
-              <Card title="Run in progress" titleAs="h3">
+              <Card title="Run in progress" titleAs="h3" outlined>
                 <CardBox>
                   <Text color="secondary">
                     A workflow run is active — polling every 2s. Expand the relevant phase
@@ -178,7 +178,7 @@ export function PipelineDashboard({
                   width: '100%',
                 }}
               >
-                <Card title="Extract codes" titleAs="h3">
+                <Card title="Extract codes" titleAs="h3" outlined>
                   <CardBox>
                     <Text color="secondary">
                       Click to provide content outline URLs or upload PDFs for this run.
@@ -219,7 +219,7 @@ export function PipelineDashboard({
                   width: '100%',
                 }}
               >
-                <Card title="Extract milestones" titleAs="h3">
+                <Card title="Extract milestones" titleAs="h3" outlined>
                   <CardBox>
                     <Text color="secondary">
                       Click to provide content outline URLs or upload PDFs. A single
@@ -262,7 +262,7 @@ export function PipelineDashboard({
                   width: '100%',
                 }}
               >
-                <Card title="Map codes" titleAs="h3">
+                <Card title="Map codes" titleAs="h3" outlined>
                   <CardBox>
                     <Text color="secondary">
                       {`Click to map ${unmappedCodeCount} unmapped code${unmappedCodeCount === 1 ? '' : 's'} against the AMBOSS MCP server. Sequential runs are allowed — the CTA reappears as long as any codes remain unmapped.`}
@@ -273,7 +273,7 @@ export function PipelineDashboard({
             );
           }
           return (
-            <Card title="Next: Suggestion consolidation" titleAs="h3">
+            <Card title="Next: Suggestion consolidation" titleAs="h3" outlined>
               <CardBox>
                 <Text color="secondary">
                   Combine code mappings into new-article and article-update candidates.

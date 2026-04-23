@@ -19,7 +19,7 @@ export function SpecialtyCard({
   return (
     <div className="card-fill">
       <NextLink href={href} style={{ textDecoration: 'none' }}>
-        <Card title={specialty.name} titleAs="h3">
+        <Card title={specialty.name} titleAs="h3" outlined>
           <CardBox>
             <Stack space="s">
               <Inline space="xs">

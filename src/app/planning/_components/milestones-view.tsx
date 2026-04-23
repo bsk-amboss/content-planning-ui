@@ -27,7 +27,7 @@ export function MilestonesView({ milestones }: { milestones: string | null }) {
 
   return (
     <Stack space="l">
-      <Card title="Milestones" titleAs="h3">
+      <Card title="Milestones" titleAs="h3" outlined>
         <CardBox>
           <Stack space="m">
             <Text color="secondary">

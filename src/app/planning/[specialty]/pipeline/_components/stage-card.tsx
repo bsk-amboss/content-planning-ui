@@ -278,7 +278,7 @@ export function StageCard({
 
   return (
     <div className="card-fill">
-      <Card title={title} titleAs="h4">
+      <Card title={title} titleAs="h4" outlined>
         <CardBox>
           <Stack space="s">
             <Badge text={STATUS_LABEL[status]} color={STATUS_COLOR[status]} />

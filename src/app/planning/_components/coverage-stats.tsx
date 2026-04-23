@@ -14,7 +14,7 @@ export function CoverageStats({ stats }: { stats: StatItem[] }) {
       {stats.map((s) => (
         <Column key={s.label} size={[12, 6, 3]}>
           <div className="card-fill">
-            <Card>
+            <Card outlined>
               <CardBox>
                 <Stack space="xs">
                   <Text color="secondary" size="s">

@@ -24,7 +24,7 @@ function FeatureCard({
 }) {
   return (
     <div className="card-fill">
-      <Card title={title} titleAs="h3">
+      <Card title={title} titleAs="h3" outlined>
         <CardBox>
           <Stack space="s">
             <Badge text={badge} color={badgeColor} />

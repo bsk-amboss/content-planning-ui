@@ -119,7 +119,7 @@ export function SourcesCard({
   };
 
   return (
-    <Card title={copy.title} titleAs="h3">
+    <Card title={copy.title} titleAs="h3" outlined>
       <CardBox>
         <Stack space="s">
           <Text color="secondary">{copy.description}</Text>
