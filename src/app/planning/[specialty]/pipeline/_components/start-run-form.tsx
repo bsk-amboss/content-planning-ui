@@ -3,7 +3,7 @@
 import {
   Button,
   Callout,
-  FormFieldGroup,
+  H6,
   Inline,
   Input,
   Select,
@@ -296,42 +296,32 @@ function InputRow({
     }
   };
 
-  // Grid layout so every row's Source/Type/Input/Remove columns line up both
-  // horizontally (fixed column widths) and vertically (align-items: end aligns
-  // the form-control bottoms across rows regardless of label height).
+  // Two-row grid per input row: first row holds labels (header row only),
+  // second row holds the form controls. Decoupling labels from the controls
+  // keeps them pixel-aligned regardless of control-height differences
+  // (Button ≠ Input ≠ Select). Non-header rows skip the label row entirely.
   const gridStyle: React.CSSProperties = {
     display: 'grid',
     gridTemplateColumns: '180px 140px minmax(0, 1fr) auto',
     columnGap: 12,
+    rowGap: 4,
     alignItems: 'end',
   };
-  const pdfLabel = index === 0 ? 'Content outline PDF' : undefined;
-  const pdfButton = (
-    <>
-      <Button
-        type="button"
-        variant="secondary"
-        disabled={row.uploading}
-        onClick={() => fileInput.current?.click()}
-      >
-        {row.uploading ? 'Uploading…' : row.upload ? row.upload.name : 'Choose file'}
-      </Button>
-      <input
-        ref={fileInput}
-        type="file"
-        accept="application/pdf"
-        onChange={onFilePick}
-        disabled={row.uploading}
-        style={{ display: 'none' }}
-      />
-    </>
-  );
+  const isHeaderRow = index === 0;
+  const urlLabel = row.kind === 'url' ? 'Content outline URL' : 'Content outline PDF';
 
   return (
     <Stack space="xxs">
       <div style={gridStyle}>
+        {isHeaderRow ? (
+          <>
+            <H6 as="div">Source</H6>
+            <H6 as="div">Type</H6>
+            <H6 as="div">{urlLabel}</H6>
+            <span aria-hidden />
+          </>
+        ) : null}
         <Select
-          label={index === 0 ? 'Source' : undefined}
           name={`source-${row.id}`}
           value={row.source}
           onChange={(e) => {
@@ -349,7 +339,6 @@ function InputRow({
           ]}
         />
         <Select
-          label={index === 0 ? 'Type' : undefined}
           name={`kind-${row.id}`}
           value={row.kind}
           onChange={(e) =>
@@ -362,16 +351,34 @@ function InputRow({
         />
         {row.kind === 'url' ? (
           <Input
-            label={index === 0 ? 'Content outline URL' : undefined}
             name={`url-${row.id}`}
             placeholder="https://example.com/outline.pdf"
             value={row.url}
             onChange={(e) => onChange({ url: e.target.value })}
           />
-        ) : pdfLabel ? (
-          <FormFieldGroup label={pdfLabel}>{pdfButton}</FormFieldGroup>
         ) : (
-          <div>{pdfButton}</div>
+          <div>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={row.uploading}
+              onClick={() => fileInput.current?.click()}
+            >
+              {row.uploading
+                ? 'Uploading…'
+                : row.upload
+                  ? row.upload.name
+                  : 'Choose file'}
+            </Button>
+            <input
+              ref={fileInput}
+              type="file"
+              accept="application/pdf"
+              onChange={onFilePick}
+              disabled={row.uploading}
+              style={{ display: 'none' }}
+            />
+          </div>
         )}
         <Button type="button" variant="tertiary" disabled={!canRemove} onClick={onRemove}>
           Remove
