@@ -233,10 +233,10 @@ You are extracting medical items for the medical specialty: ${input.specialtySlu
 Please load and analyze the content at the following URL(s):
 ${input.url}
 
-Extract only codes in the chunk:
+Extract only codes in the chunk and do not invent any codes or descriptions that are not explicitly mentioned:
 ${input.category}
 
-Extract all medical items from the document and return exclusively an output in JSON format, with no other text.
+Extract all medical items from the document and return exclusively an output in JSON format, with no other text. 
 `.trim();
 
   await logEvent({
