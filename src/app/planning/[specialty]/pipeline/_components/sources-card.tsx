@@ -13,14 +13,61 @@ import {
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import type { CodeSource } from '@/lib/workflows/lib/sources';
+import type { SourceKind } from './add-source-modal';
+
+const KIND_COPY: Record<
+  SourceKind,
+  {
+    title: string;
+    endpoint: string;
+    description: React.ReactNode;
+    slugPlaceholder: string;
+    namePlaceholder: string;
+    emptyLabel: string;
+  }
+> = {
+  code: {
+    title: 'Code sources',
+    endpoint: '/api/code-sources',
+    description: (
+      <>
+        The slug becomes the code prefix (e.g. <code>ab_&lt;specialty&gt;_0001</code>).
+        Add any source whose content you want to extract codes from.
+      </>
+    ),
+    slugPlaceholder: 'usmle',
+    namePlaceholder: 'USMLE',
+    emptyLabel: 'No code sources yet — add one below to enable the source dropdown.',
+  },
+  milestone: {
+    title: 'Milestone sources',
+    endpoint: '/api/milestone-sources',
+    description: (
+      <>
+        Publishers whose milestone documents you want to extract from. ACGME is seeded by
+        default — add more as needed (e.g. specialty board publications).
+      </>
+    ),
+    slugPlaceholder: 'aamc',
+    namePlaceholder: 'AAMC',
+    emptyLabel: 'No milestone sources yet — add one below to enable the source dropdown.',
+  },
+};
 
 /**
- * Manage the set of code-source prefixes available in the start-run form's
- * Source dropdown. Seeded with `ab`, `orphanet`, `icd10` — add more as needed
- * for new content providers.
+ * Manage the set of source prefixes available in a start-run form's Source
+ * dropdown. `kind` selects which registry (code vs milestone) this card
+ * operates on.
  */
-export function CodeSourcesCard({ sources }: { sources: CodeSource[] }) {
+export function SourcesCard({
+  kind,
+  sources,
+}: {
+  kind: SourceKind;
+  sources: CodeSource[];
+}) {
   const router = useRouter();
+  const copy = KIND_COPY[kind];
   const [slug, setSlug] = useState('');
   const [name, setName] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -45,7 +92,7 @@ export function CodeSourcesCard({ sources }: { sources: CodeSource[] }) {
     }
     setSubmitting(true);
     try {
-      const res = await fetch('/api/code-sources', {
+      const res = await fetch(copy.endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ slug: s, name: n }),
@@ -65,20 +112,17 @@ export function CodeSourcesCard({ sources }: { sources: CodeSource[] }) {
 
   const onDelete = async (targetSlug: string) => {
     if (!confirm(`Delete source "${targetSlug}"?`)) return;
-    const res = await fetch(`/api/code-sources/${targetSlug}`, {
+    const res = await fetch(`${copy.endpoint}/${targetSlug}`, {
       method: 'DELETE',
     });
     if (res.ok) router.refresh();
   };
 
   return (
-    <Card title="Code sources" titleAs="h3">
+    <Card title={copy.title} titleAs="h3">
       <CardBox>
         <Stack space="s">
-          <Text color="secondary">
-            The slug becomes the code prefix (e.g. <code>ab_&lt;specialty&gt;_0001</code>
-            ). Add any source whose content you want to extract codes from.
-          </Text>
+          <Text color="secondary">{copy.description}</Text>
 
           {sources.length > 0 ? (
             <Stack space="xxs">
@@ -99,24 +143,22 @@ export function CodeSourcesCard({ sources }: { sources: CodeSource[] }) {
               ))}
             </Stack>
           ) : (
-            <Text color="secondary">
-              No sources yet — add one below to enable the source dropdown.
-            </Text>
+            <Text color="secondary">{copy.emptyLabel}</Text>
           )}
 
           <form onSubmit={onAdd}>
             <Inline space="s" vAlignItems="bottom">
               <Input
                 label="Slug"
-                name="new-source-slug"
-                placeholder="usmle"
+                name={`new-${kind}-source-slug`}
+                placeholder={copy.slugPlaceholder}
                 value={slug}
                 onChange={(e) => setSlug(e.target.value)}
               />
               <Input
                 label="Display name"
-                name="new-source-name"
-                placeholder="USMLE"
+                name={`new-${kind}-source-name`}
+                placeholder={copy.namePlaceholder}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />

@@ -6,15 +6,28 @@
  * dashboard within a few seconds of DB truth without saturating the DB.
  */
 
-import { asc, desc, eq, sql } from 'drizzle-orm';
+import { asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { cacheLife, cacheTag } from 'next/cache';
 import { getDb } from '@/lib/db';
 import { pipelineEvents, pipelineRuns, pipelineStages } from '@/lib/db/schema';
 import { derivePhase, type Phase } from '@/lib/phase';
+import type { StageName } from '@/lib/workflows/lib/db-writes';
 
 export type PipelineRunRow = typeof pipelineRuns.$inferSelect;
 export type PipelineStageRow = typeof pipelineStages.$inferSelect;
 export type PipelineEventRow = typeof pipelineEvents.$inferSelect;
+
+/**
+ * A stage row with the context needed to render it — the inputs that produced
+ * it (from the stage's own run) and the event log filtered to just that run +
+ * stage. Used by the dashboard so each stage card is self-contained and not
+ * coupled to a single "current run."
+ */
+export type StageContext = {
+  stage: PipelineStageRow;
+  runUrls: unknown;
+  events: PipelineEventRow[];
+};
 
 /**
  * The "current" run for a specialty: the most recent non-terminal run if one
@@ -76,6 +89,107 @@ export async function listPipelineEvents(
     .from(pipelineEvents)
     .where(eq(pipelineEvents.runId, runId))
     .orderBy(asc(pipelineEvents.createdAt));
+}
+
+/**
+ * Return one `StageContext` per stage name for a specialty — picking the most
+ * recent stage row across every run. This lets the dashboard show the true
+ * state of (e.g.) `extract_codes` even when the latest run was a milestones
+ * run that contains only `extract_milestones`.
+ *
+ * "Most recent" uses `finished_at` first (terminal stages), then `started_at`
+ * (mid-run), then the run's `started_at` (pending stages), to cover every
+ * lifecycle phase.
+ */
+export async function getLatestStageContexts(
+  slug: string,
+): Promise<Partial<Record<StageName, StageContext>>> {
+  'use cache';
+  cacheTag(`pipeline:${slug}`);
+  cacheLife('seconds');
+  const db = getDb();
+
+  // DISTINCT ON (stage) keeps one row per stage name — whichever has the most
+  // recent activity. Join to pipeline_runs so we can pull contentOutlineUrls
+  // for each stage's originating run in a single pass.
+  const result = await db.execute<{
+    stage: string;
+    run_id: string;
+    id: string;
+    status: string;
+    workflow_run_id: string | null;
+    started_at: Date | null;
+    finished_at: Date | null;
+    approved_at: Date | null;
+    approved_by: string | null;
+    output_summary: unknown;
+    draft_payload: unknown;
+    error_message: string | null;
+    content_outline_urls: unknown;
+  }>(sql`
+    SELECT DISTINCT ON (ps.stage)
+      ps.stage,
+      ps.run_id,
+      ps.id,
+      ps.status,
+      ps.workflow_run_id,
+      ps.started_at,
+      ps.finished_at,
+      ps.approved_at,
+      ps.approved_by,
+      ps.output_summary,
+      ps.draft_payload,
+      ps.error_message,
+      pr.content_outline_urls
+    FROM pipeline_stages ps
+    JOIN pipeline_runs pr ON ps.run_id = pr.id
+    WHERE pr.specialty_slug = ${slug}
+    ORDER BY
+      ps.stage,
+      COALESCE(ps.finished_at, ps.started_at, pr.started_at) DESC
+  `);
+  const rows =
+    (result as unknown as { rows?: typeof result }).rows ??
+    (result as unknown as typeof result);
+
+  const stageRows = (rows as unknown as Array<Record<string, unknown>>) ?? [];
+  if (stageRows.length === 0) return {};
+
+  // Fetch events for every run that contributed a latest stage, then partition
+  // by (runId, stageName) so each card only sees its own log.
+  const runIds = [...new Set(stageRows.map((r) => String(r.run_id)))];
+  const eventRows = await db
+    .select()
+    .from(pipelineEvents)
+    .where(inArray(pipelineEvents.runId, runIds))
+    .orderBy(asc(pipelineEvents.createdAt));
+
+  const out: Partial<Record<StageName, StageContext>> = {};
+  for (const r of stageRows) {
+    const stageName = r.stage as StageName;
+    const runId = String(r.run_id);
+    const events = eventRows.filter((e) => e.runId === runId && e.stage === stageName);
+    const stage: PipelineStageRow = {
+      id: String(r.id),
+      runId,
+      stage: stageName,
+      status: String(r.status),
+      workflowRunId: (r.workflow_run_id as string | null) ?? null,
+      startedAt: (r.started_at as Date | null) ?? null,
+      finishedAt: (r.finished_at as Date | null) ?? null,
+      approvedAt: (r.approved_at as Date | null) ?? null,
+      approvedBy: (r.approved_by as string | null) ?? null,
+      outputSummary: r.output_summary ?? null,
+      draftPayload: r.draft_payload ?? null,
+      errorMessage: (r.error_message as string | null) ?? null,
+    };
+    out[stageName] = {
+      stage,
+      runUrls: r.content_outline_urls ?? null,
+      events,
+    };
+  }
+  return out;
 }
 
 /**

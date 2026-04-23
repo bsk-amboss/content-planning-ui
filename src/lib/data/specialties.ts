@@ -1,4 +1,7 @@
+import { eq } from 'drizzle-orm';
 import { cacheLife, cacheTag } from 'next/cache';
+import { getDb } from '@/lib/db';
+import { specialties } from '@/lib/db/schema';
 import { getRepositories } from '@/lib/repositories';
 
 export type Backend = 'postgres' | 'sheets' | 'xlsx';
@@ -17,6 +20,24 @@ export async function getSpecialty(slug: string) {
   cacheLife('hours');
   const { repos } = getRepositories();
   return repos.specialties.get(slug);
+}
+
+/**
+ * Approved milestones blob for a specialty. Lives on `specialties.milestones`
+ * (plain text, written at the end of the extract-milestones workflow). Returns
+ * `null` when the pipeline hasn't produced any yet.
+ */
+export async function getMilestones(slug: string): Promise<string | null> {
+  'use cache';
+  cacheTag(`specialty:${slug}`);
+  cacheLife('minutes');
+  const db = getDb();
+  const [row] = await db
+    .select({ milestones: specialties.milestones })
+    .from(specialties)
+    .where(eq(specialties.slug, slug))
+    .limit(1);
+  return row?.milestones ?? null;
 }
 
 /**

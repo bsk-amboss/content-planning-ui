@@ -4,20 +4,52 @@ import { Callout, Input, Modal, Stack } from '@amboss/design-system';
 import { useState } from 'react';
 import type { CodeSource } from '@/lib/workflows/lib/sources';
 
+export type SourceKind = 'code' | 'milestone';
+
+const KIND_COPY: Record<
+  SourceKind,
+  {
+    endpoint: string;
+    header: string;
+    subHeader: string;
+    slugPlaceholder: string;
+    namePlaceholder: string;
+  }
+> = {
+  code: {
+    endpoint: '/api/code-sources',
+    header: 'Add a new code source',
+    subHeader: 'The slug becomes the code prefix (e.g. usmle_<specialty>_0001).',
+    slugPlaceholder: 'usmle',
+    namePlaceholder: 'USMLE',
+  },
+  milestone: {
+    endpoint: '/api/milestone-sources',
+    header: 'Add a new milestone source',
+    subHeader: 'Publisher or authority that produced the milestone document.',
+    slugPlaceholder: 'aamc',
+    namePlaceholder: 'AAMC',
+  },
+};
+
 /**
- * Inline "add a new code source" modal, triggered from the Source dropdown's
+ * Inline "add a new source" modal, triggered from the Source dropdown's
  * special "+ Add new source…" option. On success, hands the created source
- * back to the caller so the current row can auto-select it.
+ * back to the caller so the current row can auto-select it. The `kind` prop
+ * decides which registry (code vs milestone) the row goes into.
  */
 export function AddSourceModal({
   open,
+  kind = 'code',
   onClose,
   onCreated,
 }: {
   open: boolean;
+  kind?: SourceKind;
   onClose: () => void;
   onCreated: (source: CodeSource) => void;
 }) {
+  const copy = KIND_COPY[kind];
   const [slug, setSlug] = useState('');
   const [name, setName] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -50,7 +82,7 @@ export function AddSourceModal({
     }
     setSubmitting(true);
     try {
-      const res = await fetch('/api/code-sources', {
+      const res = await fetch(copy.endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ slug: s, name: n }),
@@ -73,8 +105,8 @@ export function AddSourceModal({
 
   return (
     <Modal
-      header="Add a new code source"
-      subHeader="The slug becomes the code prefix (e.g. usmle_<specialty>_0001)."
+      header={copy.header}
+      subHeader={copy.subHeader}
       size="m"
       isDismissible
       actionButton={{
@@ -95,14 +127,14 @@ export function AddSourceModal({
           <Input
             label="Slug"
             name="modal-source-slug"
-            placeholder="usmle"
+            placeholder={copy.slugPlaceholder}
             value={slug}
             onChange={(e) => setSlug(e.target.value)}
           />
           <Input
             label="Display name"
             name="modal-source-name"
-            placeholder="USMLE"
+            placeholder={copy.namePlaceholder}
             value={name}
             onChange={(e) => setName(e.target.value)}
           />

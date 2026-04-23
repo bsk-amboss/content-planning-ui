@@ -3,20 +3,14 @@
 import { Button, Callout, Inline, Stack, Text } from '@amboss/design-system';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import {
-  DEFAULT_EXTRACT_SYSTEM_PROMPT,
-  DEFAULT_IDENTIFY_SYSTEM_PROMPT,
-} from '@/lib/workflows/lib/prompts';
+import { DEFAULT_MILESTONES_SYSTEM_PROMPT } from '@/lib/workflows/lib/prompts';
 import type { CodeSource } from '@/lib/workflows/lib/sources';
 import { AddSourceModal } from './add-source-modal';
 import { DefaultPromptModal } from './default-prompt-modal';
 import { InputRow, type InputRowState, newInputRow } from './input-row';
 import { PromptSection } from './prompt-section';
 
-type Row = InputRowState;
-const newRow = newInputRow;
-
-export function StartRunForm({
+export function StartMilestonesForm({
   specialtySlug,
   sources,
 }: {
@@ -24,27 +18,22 @@ export function StartRunForm({
   sources: CodeSource[];
 }) {
   const router = useRouter();
-  const defaultSource = sources[0]?.slug ?? 'ab';
-  const [rows, setRows] = useState<Row[]>([newRow(defaultSource)]);
-  const [identifyInstructions, setIdentifyInstructions] = useState('');
-  const [extractInstructions, setExtractInstructions] = useState('');
-  const [showIdentifyDefault, setShowIdentifyDefault] = useState(false);
-  const [showExtractDefault, setShowExtractDefault] = useState(false);
+  const defaultSource = sources[0]?.slug ?? 'acgme';
+  const [rows, setRows] = useState<InputRowState[]>([newInputRow(defaultSource)]);
+  const [instructions, setInstructions] = useState('');
+  const [showDefault, setShowDefault] = useState(false);
   const [addSourceForRowId, setAddSourceForRowId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ runId: string; token: string } | null>(null);
 
-  const updateRow = (id: string, patch: Partial<Row>) => {
+  const updateRow = (id: string, patch: Partial<InputRowState>) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   };
-
   const removeRow = (id: string) => {
     setRows((prev) => (prev.length === 1 ? prev : prev.filter((r) => r.id !== id)));
   };
-
-  const addRow = () => setRows((prev) => [...prev, newRow(defaultSource)]);
-
+  const addRow = () => setRows((prev) => [...prev, newInputRow(defaultSource)]);
   const anyUploading = rows.some((r) => r.uploading);
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -77,14 +66,13 @@ export function StartRunForm({
 
     setSubmitting(true);
     try {
-      const res = await fetch('/api/workflows/extract', {
+      const res = await fetch('/api/workflows/extract-milestones', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           specialtySlug,
           inputs,
-          identifyModulesInstructions: identifyInstructions.trim() || undefined,
-          extractCodesInstructions: extractInstructions.trim() || undefined,
+          milestonesInstructions: instructions.trim() || undefined,
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -93,9 +81,8 @@ export function StartRunForm({
         return;
       }
       setSuccess({ runId: body.runId, token: body.approvalToken });
-      setRows([newRow(defaultSource)]);
-      setIdentifyInstructions('');
-      setExtractInstructions('');
+      setRows([newInputRow(defaultSource)]);
+      setInstructions('');
       router.refresh();
     } finally {
       setSubmitting(false);
@@ -108,12 +95,8 @@ export function StartRunForm({
         <Stack space="xs">
           <Text weight="bold">Inputs</Text>
           <Text color="secondary">
-            Each row is a content outline to extract codes from. The source slug becomes
-            the code prefix (e.g.{' '}
-            <code>
-              {defaultSource}_{specialtySlug}_0001
-            </code>
-            ).
+            Each row is a content outline to extract milestones from. One Gemini call
+            synthesizes a single consolidated milestones document across all sources.
           </Text>
           {rows.map((row, idx) => (
             <InputRow
@@ -137,18 +120,11 @@ export function StartRunForm({
         </Stack>
 
         <PromptSection
-          title="Phase 1 — Identify modules"
-          hint="Runs once per input. Splits the PDF/URL into chapters."
-          value={identifyInstructions}
-          onChange={setIdentifyInstructions}
-          onViewDefault={() => setShowIdentifyDefault(true)}
-        />
-        <PromptSection
-          title="Phase 2 — Extract codes"
-          hint="Runs once per (input, module). Pulls discrete medical items."
-          value={extractInstructions}
-          onChange={setExtractInstructions}
-          onViewDefault={() => setShowExtractDefault(true)}
+          title="Milestones — system prompt"
+          hint="Single Gemini call across every input. Returns plain text."
+          value={instructions}
+          onChange={setInstructions}
+          onViewDefault={() => setShowDefault(true)}
         />
 
         <Inline space="s">
@@ -168,29 +144,21 @@ export function StartRunForm({
       </Stack>
 
       <DefaultPromptModal
-        open={showIdentifyDefault}
-        onClose={() => setShowIdentifyDefault(false)}
-        title="Phase 1 default prompt — Identify modules"
+        open={showDefault}
+        onClose={() => setShowDefault(false)}
+        title="Milestones default prompt"
         subHeader="Appended to any additional instructions you provide."
-        text={DEFAULT_IDENTIFY_SYSTEM_PROMPT}
-      />
-      <DefaultPromptModal
-        open={showExtractDefault}
-        onClose={() => setShowExtractDefault(false)}
-        title="Phase 2 default prompt — Extract codes"
-        subHeader="Appended to any additional instructions you provide."
-        text={DEFAULT_EXTRACT_SYSTEM_PROMPT}
+        text={DEFAULT_MILESTONES_SYSTEM_PROMPT}
       />
       <AddSourceModal
         open={addSourceForRowId !== null}
+        kind="milestone"
         onClose={() => setAddSourceForRowId(null)}
         onCreated={(source) => {
           if (addSourceForRowId) {
             updateRow(addSourceForRowId, { source: source.slug });
           }
           setAddSourceForRowId(null);
-          // Refresh so the new source shows up in every row's dropdown (and
-          // in the Code sources card below the dashboard).
           router.refresh();
         }}
       />

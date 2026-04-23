@@ -1,37 +1,33 @@
 /**
- * Trigger endpoint for the extract-codes workflow.
+ * Trigger endpoint for the extract-milestones workflow.
  *
- * POST /api/workflows/extract
+ * POST /api/workflows/extract-milestones
  *   body: {
  *     specialtySlug: string;
- *     inputs: Array<{ source: 'ab' | 'orphanet' | 'icd10'; url: string }>;
- *     identifyModulesInstructions?: string;   // appended to DEFAULT_IDENTIFY_SYSTEM_PROMPT
- *     extractCodesInstructions?: string;      // appended to DEFAULT_EXTRACT_SYSTEM_PROMPT
+ *     inputs: Array<{ source: string; url: string }>;
+ *     milestonesInstructions?: string;   // appended to DEFAULT_MILESTONES_SYSTEM_PROMPT
  *   }
  *
- * Responsibility:
- *   1. Verify the specialty exists.
- *   2. Create a pipeline_runs row (with the inputs + per-phase instructions
- *      snapshot) + the extract_codes stage.
- *   3. Call `start(extractCodesWorkflow, ...)` and record the workflow run id.
+ * Mirrors `/api/workflows/extract` but scoped to the single-phase milestones
+ * extraction that writes a plain-text blob to `specialties.milestones` on
+ * approval.
  */
 
 import { eq } from 'drizzle-orm';
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
 import { start } from 'workflow/api';
-import { listCodeSources } from '@/lib/data/code-sources';
+import { listMilestoneSources } from '@/lib/data/milestone-sources';
 import { getDb } from '@/lib/db';
 import { pipelineRuns, pipelineStages, specialties } from '@/lib/db/schema';
 import { approvalToken } from '@/lib/workflows/lib/approval';
-import { extractCodesWorkflow } from '@/lib/workflows/preprocessing/extract-codes';
+import { extractMilestonesWorkflow } from '@/lib/workflows/preprocessing/extract-milestones';
 import { parseContentInputs } from '../_lib/inputs';
 
 type Body = {
   specialtySlug?: string;
   inputs?: unknown;
-  identifyModulesInstructions?: string;
-  extractCodesInstructions?: string;
+  milestonesInstructions?: string;
 };
 
 export async function POST(req: NextRequest) {
@@ -40,7 +36,7 @@ export async function POST(req: NextRequest) {
   if (!slug) {
     return NextResponse.json({ error: 'specialtySlug required' }, { status: 400 });
   }
-  const sourceRows = await listCodeSources();
+  const sourceRows = await listMilestoneSources();
   const allowedSlugs = sourceRows.map((r) => r.slug);
   const parsed = parseContentInputs(body.inputs, allowedSlugs);
   if (!Array.isArray(parsed)) {
@@ -54,8 +50,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `specialty not found: ${slug}` }, { status: 404 });
   }
 
-  const identifyInstructions = body.identifyModulesInstructions?.trim() || null;
-  const extractInstructions = body.extractCodesInstructions?.trim() || null;
+  const milestonesInstructions = body.milestonesInstructions?.trim() || null;
 
   const [run] = await db
     .insert(pipelineRuns)
@@ -63,22 +58,20 @@ export async function POST(req: NextRequest) {
       specialtySlug: slug,
       status: 'running',
       contentOutlineUrls: inputs,
-      identifyModulesInstructions: identifyInstructions,
-      extractCodesInstructions: extractInstructions,
+      milestonesInstructions,
     })
     .returning({ id: pipelineRuns.id });
 
   await db
     .insert(pipelineStages)
-    .values({ runId: run.id, stage: 'extract_codes', status: 'pending' });
+    .values({ runId: run.id, stage: 'extract_milestones', status: 'pending' });
 
-  const wfRun = await start(extractCodesWorkflow, [
+  const wfRun = await start(extractMilestonesWorkflow, [
     {
       runId: run.id,
       specialtySlug: slug,
       inputs,
-      identifyInstructions: identifyInstructions ?? undefined,
-      extractInstructions: extractInstructions ?? undefined,
+      milestonesInstructions: milestonesInstructions ?? undefined,
     },
   ]);
 
@@ -95,6 +88,6 @@ export async function POST(req: NextRequest) {
     workflowRunId: wfRun.runId,
     specialty: slug,
     inputs: inputs.length,
-    approvalToken: approvalToken(run.id, 'extract_codes'),
+    approvalToken: approvalToken(run.id, 'extract_milestones'),
   });
 }

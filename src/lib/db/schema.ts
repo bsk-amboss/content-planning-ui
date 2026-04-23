@@ -24,6 +24,18 @@ export const codeSources = pgTable('code_sources', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/**
+ * Milestone sources registry — separate from `code_sources` because milestone
+ * extraction pulls from different upstream publishers (ACGME is the seed).
+ * Same shape, but kept distinct so the two dropdowns don't mix vocabularies.
+ */
+export const milestoneSources = pgTable('milestone_sources', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  slug: text('slug').notNull().unique(),
+  name: text('name').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const specialties = pgTable('specialties', {
   slug: text('slug').primaryKey(),
   name: text('name').notNull(),
@@ -31,9 +43,10 @@ export const specialties = pgTable('specialties', {
   sheetId: text('sheet_id'),
   xlsxPath: text('xlsx_path'),
   lastSeededAt: timestamp('last_seeded_at', { withTimezone: true }),
-  // Approved milestone set for this specialty. Populated by the preprocessing
+  // Approved milestones for this specialty — stored as a plain-text blob since
+  // the extraction output is a single string. Populated by the preprocessing
   // pipeline once the user signs off. Draft versions live on pipeline_stages.
-  milestones: jsonb('milestones'),
+  milestones: text('milestones'),
   // Region/language optional; only identity columns live on the specialty.
   // Per-run inputs (PDF URLs, system prompts) live on pipeline_runs.
   region: text('region'),
@@ -301,7 +314,7 @@ export const pipelineRuns = pgTable(
     contentOutlineUrls: jsonb('content_outline_urls'),
     identifyModulesInstructions: text('identify_modules_instructions'),
     extractCodesInstructions: text('extract_codes_instructions'),
-    milestonesSystemPrompt: text('milestones_system_prompt'),
+    milestonesInstructions: text('milestones_instructions'),
   },
   (t) => [index('idx_pipeline_runs_specialty').on(t.specialtySlug)],
 );

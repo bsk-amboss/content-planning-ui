@@ -20,9 +20,18 @@ import { env } from '@/env';
 import type { StageName } from './db-writes';
 import { logEvent } from './events';
 import { estimateCostUsd } from './pricing';
-import { DEFAULT_EXTRACT_SYSTEM_PROMPT, DEFAULT_IDENTIFY_SYSTEM_PROMPT } from './prompts';
+import {
+  DEFAULT_EXTRACT_SYSTEM_PROMPT,
+  DEFAULT_IDENTIFY_SYSTEM_PROMPT,
+  DEFAULT_MILESTONES_SYSTEM_PROMPT,
+} from './prompts';
+import type { ContentInput } from './sources';
 
-export { DEFAULT_EXTRACT_SYSTEM_PROMPT, DEFAULT_IDENTIFY_SYSTEM_PROMPT };
+export {
+  DEFAULT_EXTRACT_SYSTEM_PROMPT,
+  DEFAULT_IDENTIFY_SYSTEM_PROMPT,
+  DEFAULT_MILESTONES_SYSTEM_PROMPT,
+};
 
 const MODEL_ID = 'gemini-3.1-pro-preview';
 
@@ -37,19 +46,6 @@ export const ExtractedCodeSchema = z.object({
 });
 
 export type RawExtractedCode = z.infer<typeof ExtractedCodeSchema>;
-
-export const MilestoneSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  description: z.string().optional(),
-});
-
-export type Milestone = z.infer<typeof MilestoneSchema>;
-
-export type MilestoneDraft = {
-  version: number;
-  milestones: Milestone[];
-};
 
 const IdentifyModulesOutputSchema = z.array(z.object({ category: z.string() }));
 const ExtractCodesOutputSchema = z.array(
@@ -315,28 +311,122 @@ Extract all medical items from the document and return exclusively an output in 
   }
 }
 
-// --- Milestones (still stubbed; n8n workflow not shared yet) ----------------
+// --- Milestones ------------------------------------------------------------
+//
+// Single-call extraction: Gemini reads every provided URL via `url_context`
+// and synthesizes a single plain-text milestones blob. Stubbed when no
+// `GOOGLE_GENERATIVE_AI_API_KEY` is set so the durability path still runs.
 
-export async function extractMilestonesFromPdfs(input: {
+export async function extractMilestonesForInputs(input: {
+  inputs: ContentInput[];
   specialtySlug: string;
-  pdfUrls: string[];
-}): Promise<MilestoneDraft> {
+  additionalInstructions?: string;
+  runId: string;
+  stage: StageName;
+}): Promise<string> {
   'use step';
-  console.log('[pipeline] extractMilestonesFromPdfs', {
+  console.log('[pipeline] extractMilestonesForInputs', {
     specialtySlug: input.specialtySlug,
-    pdfCount: input.pdfUrls.length,
+    inputs: input.inputs.length,
     stubbed: !hasGeminiCreds(),
   });
+
   if (!hasGeminiCreds()) {
-    return {
-      version: 1,
-      milestones: [
-        { id: 'M1', title: 'Stubbed milestone 1', description: 'Placeholder' },
-        { id: 'M2', title: 'Stubbed milestone 2', description: 'Placeholder' },
-      ],
-    };
+    const stub = [
+      'MK-1. Stubbed medical knowledge milestone.',
+      'PC-1. Stubbed patient care milestone.',
+      'SBP-1. Stubbed systems-based practice milestone.',
+    ].join('\n');
+    await logEvent({
+      runId: input.runId,
+      stage: input.stage,
+      level: 'info',
+      message: `Milestones (stub): produced ${stub.length} chars for ${input.inputs.length} input(s)`,
+      metrics: {
+        phase: 'milestones',
+        completion: stub,
+      },
+    });
+    return stub;
   }
-  throw new Error(
-    'Real Gemini milestone extraction not yet wired. Share the n8n milestones workflow to flesh this out.',
+
+  const system = composePrompt(
+    DEFAULT_MILESTONES_SYSTEM_PROMPT,
+    input.additionalInstructions,
   );
+  // Match the n8n specialty_milestone_extractor user-message template so the
+  // combined {system, user} contract the model sees stays identical. Multiple
+  // URLs are supported by listing them under the same "URL(s)" line.
+  const urlList = input.inputs.map((i) => `- ${i.url} (source: ${i.source})`).join('\n');
+  const userMessage = `
+You are extracting milestones for the medical specialty: ${input.specialtySlug}.
+
+Please load and analyze the content at the following URL(s):
+${urlList}
+
+Extract all patient care and medical knowledge milestones from the document and return them as a structured ordered list.
+`.trim();
+
+  await logEvent({
+    runId: input.runId,
+    stage: input.stage,
+    level: 'info',
+    message: `Milestones: extracting across ${input.inputs.length} input(s)`,
+    metrics: { model: MODEL_ID, phase: 'milestones' },
+  });
+
+  const started = Date.now();
+  try {
+    const result = await generateText({
+      model: google(MODEL_ID),
+      system,
+      prompt: userMessage,
+      tools: { url_context: google.tools.urlContext({}) },
+      providerOptions: {
+        google: { thinkingConfig: { thinkingLevel: 'high' } },
+      },
+      temperature: 1,
+      topP: 0.95,
+      topK: 64,
+    });
+
+    const milestones = result.text.trim();
+    if (milestones.length === 0) {
+      throw new Error('Model returned empty milestones output');
+    }
+    const durationMs = Date.now() - started;
+    const usage = {
+      inputTokens: result.usage?.inputTokens,
+      outputTokens: result.usage?.outputTokens,
+      reasoningTokens: result.usage?.reasoningTokens,
+      cachedInputTokens: result.usage?.cachedInputTokens,
+    };
+    const costUsd = estimateCostUsd(MODEL_ID, usage);
+    await logEvent({
+      runId: input.runId,
+      stage: input.stage,
+      level: 'info',
+      message: `Milestones done: ${milestones.length} chars`,
+      metrics: {
+        durationMs,
+        ...usage,
+        costUsd,
+        model: MODEL_ID,
+        phase: 'milestones',
+        completion: milestones,
+      },
+    });
+    return milestones;
+  } catch (e) {
+    const durationMs = Date.now() - started;
+    const msg = e instanceof Error ? e.message : String(e);
+    await logEvent({
+      runId: input.runId,
+      stage: input.stage,
+      level: 'error',
+      message: `Milestones failed: ${msg}`,
+      metrics: { durationMs, model: MODEL_ID, phase: 'milestones' },
+    });
+    throw e;
+  }
 }

@@ -236,10 +236,13 @@ export async function promoteExtractedCodesToCodes(
 
 export async function writeApprovedMilestones(
   specialtySlug: string,
-  milestones: unknown,
+  milestones: string,
 ): Promise<void> {
   'use step';
-  console.log('[pipeline] writeApprovedMilestones', { specialtySlug });
+  console.log('[pipeline] writeApprovedMilestones', {
+    specialtySlug,
+    chars: milestones.length,
+  });
   const db = getDb();
   await db
     .update(specialties)

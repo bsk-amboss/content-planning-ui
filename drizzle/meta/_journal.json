@@ -50,6 +50,20 @@
       "when": 1777181000000,
       "tag": "0006_code_sources",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1777275600000,
+      "tag": "0007_milestones_text",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1777276200000,
+      "tag": "0008_milestone_sources",
+      "breakpoints": true
     }
   ]
 }

@@ -48,6 +48,8 @@ function summaryLine(summary: unknown): string | null {
   if (typeof s.extracted === 'number') parts.push(`${s.extracted} extracted`);
   if (typeof s.modules === 'number') parts.push(`${s.modules} modules`);
   if (typeof s.pdfs === 'number') parts.push(`${s.pdfs} PDFs`);
+  if (typeof s.chars === 'number') parts.push(`${s.chars} chars`);
+  if (typeof s.inputs === 'number') parts.push(`${s.inputs} inputs`);
   if (parts.length === 0) return null;
   return parts.join(' · ');
 }
@@ -308,6 +310,49 @@ export function StageCard({
                   </Text>
                 ) : null}
                 {(() => {
+                  // Milestones stage: single plain-text output. Read from the
+                  // most recent milestones-phase event's completion string, or
+                  // (as a fallback) from draftPayload.milestones which persists
+                  // through approval.
+                  if (stage.stage === 'extract_milestones') {
+                    const milestonesEvent = [...evs]
+                      .reverse()
+                      .find(
+                        (e) =>
+                          (e.metrics as { phase?: string } | null)?.phase ===
+                            'milestones' &&
+                          typeof (e.metrics as { completion?: unknown } | null)
+                            ?.completion === 'string',
+                      );
+                    const fromEvent =
+                      (milestonesEvent?.metrics as { completion?: string } | null)
+                        ?.completion ?? null;
+                    const fromDraft =
+                      (stage.draftPayload as { milestones?: string } | null)
+                        ?.milestones ?? null;
+                    const text = fromEvent ?? fromDraft;
+                    if (!text) return null;
+                    return (
+                      <CollapsibleSubsection title="Output">
+                        <pre
+                          style={{
+                            background: 'var(--color-gray-50, #f8f8f8)',
+                            border: '1px solid var(--color-gray-200, #e5e5e5)',
+                            borderRadius: 4,
+                            padding: 8,
+                            fontSize: 12,
+                            lineHeight: 1.5,
+                            maxHeight: 480,
+                            overflow: 'auto',
+                            whiteSpace: 'pre-wrap',
+                            margin: 0,
+                          }}
+                        >
+                          {text}
+                        </pre>
+                      </CollapsibleSubsection>
+                    );
+                  }
                   const phase1 = evs.filter(
                     (e) => (e.metrics as { phase?: string } | null)?.phase === 'identify',
                   );
