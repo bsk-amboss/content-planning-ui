@@ -5,16 +5,17 @@
  *   - `content_outline_extractor_subworkflow.json` → identifyModulesForUrl
  *   - `content_outline_category_extractor_subworkflow.json` → extractCodesForCategory
  *
- * Uses AI SDK v6 generateText with @ai-sdk/google, the `url_context` tool, and
- * Gemini 3 Pro preview. Output is raw JSON — parsed leniently to survive code
- * fences or stray whitespace, then Zod-validated.
+ * Uses AI SDK v6 generateText with @ai-sdk/google, the `url_context` tool,
+ * Gemini 3 Pro preview, and `Output.array` for typed structured output —
+ * the SDK negotiates Gemini's native responseSchema, so we no longer parse
+ * JSON by hand or worry about fenced responses.
  *
  * Falls back to stub outputs when `GOOGLE_GENERATIVE_AI_API_KEY` is absent so
  * the durability plumbing can still be exercised without creds.
  */
 
 import { google } from '@ai-sdk/google';
-import { generateText } from 'ai';
+import { generateText, Output, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { env } from '@/env';
 import type { StageName } from './db-writes';
@@ -48,10 +49,19 @@ export const ExtractedCodeSchema = z.object({
 
 export type RawExtractedCode = z.infer<typeof ExtractedCodeSchema>;
 
-const IdentifyModulesOutputSchema = z.array(z.object({ category: z.string() }));
-const ExtractCodesOutputSchema = z.array(
-  z.object({ category: z.string(), description: z.string() }),
-);
+// Per-element schemas used with the AI SDK's `Output.array`. The SDK enforces
+// these against Gemini's native structured-output constraint — no manual
+// JSON parsing or Zod validation needed downstream.
+const IdentifyModulesElementSchema = z.object({ category: z.string() });
+const ExtractCodesElementSchema = z.object({
+  category: z.string(),
+  description: z.string(),
+});
+
+// Both phase steps use url_context, which produces extra steps (one per URL
+// fetch). The structured-output emission counts as its own step too, so
+// budget generously.
+const MAX_STEPS = 5;
 
 export function hasGeminiCreds(): boolean {
   return Boolean(env.GOOGLE_GENERATIVE_AI_API_KEY);
@@ -69,19 +79,6 @@ function composePrompt(defaultPrompt: string, additional?: string): string {
   const extra = additional?.trim();
   if (!extra) return defaultPrompt;
   return `${defaultPrompt}\n\n## Additional instructions\n\n${extra}`;
-}
-
-// --- parsing helpers --------------------------------------------------------
-
-function parseJsonArray(raw: string): unknown {
-  const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
-  const text = (fenceMatch ? fenceMatch[1] : raw).trim();
-  const first = text.indexOf('[');
-  const last = text.lastIndexOf(']');
-  if (first < 0 || last < 0 || last <= first) {
-    throw new Error(`Model response had no JSON array: ${raw.slice(0, 200)}`);
-  }
-  return JSON.parse(text.slice(first, last + 1));
 }
 
 // --- Phase 1: identify modules per PDF --------------------------------------
@@ -138,6 +135,8 @@ Identify the base hierarchies in the document and return exclusively an output i
       system,
       prompt: userMessage,
       tools: { url_context: google.tools.urlContext({}) },
+      output: Output.array({ element: IdentifyModulesElementSchema }),
+      stopWhen: stepCountIs(MAX_STEPS),
       providerOptions: {
         google: { thinkingConfig: { thinkingLevel: 'high' } },
       },
@@ -146,8 +145,7 @@ Identify the base hierarchies in the document and return exclusively an output i
       topK: 64,
     });
 
-    const parsed = parseJsonArray(result.text);
-    const modules = IdentifyModulesOutputSchema.parse(parsed);
+    const modules = result.output;
     const durationMs = Date.now() - started;
     const usage = {
       inputTokens: result.usage?.inputTokens,
@@ -256,6 +254,8 @@ Extract all medical items from the document and return exclusively an output in 
       system,
       prompt: userMessage,
       tools: { url_context: google.tools.urlContext({}) },
+      output: Output.array({ element: ExtractCodesElementSchema }),
+      stopWhen: stepCountIs(MAX_STEPS),
       providerOptions: {
         google: { thinkingConfig: { thinkingLevel: 'high' } },
       },
@@ -264,8 +264,7 @@ Extract all medical items from the document and return exclusively an output in 
       topK: 64,
     });
 
-    const parsed = parseJsonArray(result.text);
-    const codes = ExtractCodesOutputSchema.parse(parsed);
+    const codes = result.output;
     const durationMs = Date.now() - started;
     const usage = {
       inputTokens: result.usage?.inputTokens,
