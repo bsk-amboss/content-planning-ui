@@ -85,6 +85,13 @@
       "when": 1777365000000,
       "tag": "0011_mapping_filter",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1777044790650,
+      "tag": "0012_chilly_the_santerians",
+      "breakpoints": true
     }
   ]
 }

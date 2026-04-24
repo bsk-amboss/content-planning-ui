@@ -40,6 +40,7 @@ const MODEL_ID = 'gemini-3.1-pro-preview';
 export const ExtractedCodeSchema = z.object({
   code: z.string(),
   category: z.string().optional(),
+  consolidationCategory: z.string().optional(),
   description: z.string().optional(),
   source: z.string().optional(),
   metadata: z.unknown().optional(),

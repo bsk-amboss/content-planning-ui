@@ -391,6 +391,7 @@ export const extractedCodes = pgTable(
     specialtySlug: specialtyFk(),
     code: text('code').notNull(),
     category: text('category'),
+    consolidationCategory: text('consolidation_category'),
     description: text('description'),
     source: text('source'),
     metadata: jsonb('metadata'),

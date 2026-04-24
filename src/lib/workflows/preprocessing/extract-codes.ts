@@ -86,7 +86,15 @@ export async function extractCodesWorkflow(input: ExtractCodesInput) {
     });
 
     // Phase 2: extract codes per (url, module, source), batched fan-out.
-    const extracted: { category: string; description: string; source: string }[] = [];
+    // `consolidationCategory` is the Phase 1 module name — stamped on every
+    // code produced from that module so downstream consolidation can fan out
+    // per-module without re-deriving chunks.
+    const extracted: {
+      category: string;
+      description: string;
+      source: string;
+      consolidationCategory: string;
+    }[] = [];
     for (const batch of chunk(perUrlCategories, CATEGORY_CONCURRENCY)) {
       const results = await Promise.all(
         batch.map((p) =>
@@ -102,8 +110,8 @@ export async function extractCodesWorkflow(input: ExtractCodesInput) {
         ),
       );
       results.forEach((items, i) => {
-        const { source } = batch[i];
-        for (const it of items) extracted.push({ ...it, source });
+        const { source, category: consolidationCategory } = batch[i];
+        for (const it of items) extracted.push({ ...it, source, consolidationCategory });
       });
     }
 
@@ -115,6 +123,7 @@ export async function extractCodesWorkflow(input: ExtractCodesInput) {
       return {
         code: `${c.source}_${input.specialtySlug}_${String(n).padStart(4, '0')}`,
         category: c.category,
+        consolidationCategory: c.consolidationCategory,
         description: c.description,
         source: c.source,
       };
