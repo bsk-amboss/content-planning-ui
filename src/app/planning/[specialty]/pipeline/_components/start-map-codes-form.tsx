@@ -6,6 +6,7 @@ import {
   Checkbox,
   Combobox,
   Inline,
+  SegmentedControl,
   Select,
   Stack,
   Text,
@@ -64,6 +65,11 @@ export function StartMapCodesForm({
   // representable without a separate sentinel flag.
   const [selectedCats, setSelectedCats] = useState<string[]>(allCategoryValues);
   const [specificCodes, setSpecificCodes] = useState<string[]>([]);
+  // Mode toggle: the user picks either a category filter OR a specific-code
+  // list, never both. Default to categories when available, otherwise codes.
+  const [mode, setMode] = useState<'categories' | 'codes'>(
+    categories.length > 0 ? 'categories' : 'codes',
+  );
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,7 +89,8 @@ export function StartMapCodesForm({
       .filter((c) => set.has(c.category))
       .reduce((sum, c) => sum + c.unmapped, 0);
   }, [allSelected, categories, selectedCats, unmappedCount]);
-  const estimatedCount = selectedCategoryTotal + specificCodes.length;
+  const estimatedCount =
+    mode === 'categories' ? selectedCategoryTotal : specificCodes.length;
 
   const categoryOptions = useMemo(() => {
     return [
@@ -132,11 +139,15 @@ export function StartMapCodesForm({
     setSuccess(null);
     setSubmitting(true);
     try {
-      // Only send `categories` when the user narrowed the list — sending all
-      // of them is equivalent to no filter and just wastes payload.
+      // Only one of the two filters is sent per run — the mode toggle above
+      // enforces an exclusive choice. For "categories": omit when the user
+      // kept every category checked (equivalent to no filter).
       const categoriesPayload =
-        allSelected || selectedCats.length === 0 ? undefined : selectedCats;
-      const codesPayload = specificCodes.length > 0 ? specificCodes : undefined;
+        mode === 'categories' && !allSelected && selectedCats.length > 0
+          ? selectedCats
+          : undefined;
+      const codesPayload =
+        mode === 'codes' && specificCodes.length > 0 ? specificCodes : undefined;
       const res = await fetch('/api/workflows/map-codes', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -192,46 +203,65 @@ export function StartMapCodesForm({
           </Text>
         </Stack>
 
-        {categories.length > 0 ? (
-          <Stack space="xxs">
-            <Combobox
-              name="mappingCategories"
-              label="Limit to categories"
-              hint={
-                allSelected
-                  ? `All ${categories.length} categories (${fmtNum(unmappedCount)} unmapped)`
-                  : `${selectedCats.length} of ${categories.length} selected · ${fmtNum(selectedCategoryTotal)} unmapped codes`
-              }
-              multiple
-              value={selectedCats}
-              onChange={(values) => onCategoryChange(values as string[])}
-              options={categoryOptions}
-              placeholder="Select categories to map…"
-              emptyStateMessage="No categories match the filter."
-              maxHeight={320}
-              slotProps={{
-                tag: {
-                  clearButtonAriaLabel: 'Remove category',
-                },
-              }}
-            />
-          </Stack>
-        ) : (
-          <Callout
-            type="info"
-            text="No categories yet — extract codes first to populate the filter dropdown."
+        <Stack space="xs">
+          <SegmentedControl
+            label="Mapping scope"
+            isLabelHidden
+            value={mode}
+            onChange={(value) => setMode(value as 'categories' | 'codes')}
+            options={[
+              {
+                name: 'mapping-scope',
+                label: 'Limit to categories',
+                value: 'categories',
+                disabled: categories.length === 0,
+              },
+              {
+                name: 'mapping-scope',
+                label: 'Specific codes',
+                value: 'codes',
+                disabled: unmappedCodes.length === 0,
+              },
+            ]}
           />
-        )}
 
-        {unmappedCodes.length > 0 ? (
-          <Stack space="xxs">
+          {mode === 'categories' ? (
+            categories.length > 0 ? (
+              <Combobox
+                name="mappingCategories"
+                label="Limit to categories"
+                hint={
+                  allSelected
+                    ? `All ${categories.length} categories (${fmtNum(unmappedCount)} unmapped)`
+                    : `${selectedCats.length} of ${categories.length} selected · ${fmtNum(selectedCategoryTotal)} unmapped codes`
+                }
+                multiple
+                value={selectedCats}
+                onChange={(values) => onCategoryChange(values as string[])}
+                options={categoryOptions}
+                placeholder="Select categories to map…"
+                emptyStateMessage="No categories match the filter."
+                maxHeight={320}
+                slotProps={{
+                  tag: {
+                    clearButtonAriaLabel: 'Remove category',
+                  },
+                }}
+              />
+            ) : (
+              <Callout
+                type="info"
+                text="No categories yet — extract codes first to populate the filter dropdown."
+              />
+            )
+          ) : unmappedCodes.length > 0 ? (
             <Combobox
               name="specificCodes"
-              label="Specific codes (optional)"
+              label="Specific codes"
               hint={
                 specificCodes.length === 0
                   ? `Search ${fmtNum(unmappedCodes.length)} unmapped codes by ID or description`
-                  : `${specificCodes.length} code${specificCodes.length === 1 ? '' : 's'} selected · mapped in addition to the category filter above`
+                  : `${specificCodes.length} code${specificCodes.length === 1 ? '' : 's'} selected`
               }
               multiple
               value={specificCodes}
@@ -256,8 +286,13 @@ export function StartMapCodesForm({
                 },
               }}
             />
-          </Stack>
-        ) : null}
+          ) : (
+            <Callout
+              type="info"
+              text="No unmapped codes available. Everything is already mapped."
+            />
+          )}
+        </Stack>
 
         <Stack space="xxs">
           <Checkbox
