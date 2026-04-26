@@ -21,9 +21,31 @@ const COVERAGE_COLOR: Record<CoverageLevel, BadgeColor> = {
   specialist: 'purple',
 };
 
+export function coverageBadgeColor(
+  level: CoverageLevel | undefined,
+): BadgeColor | undefined {
+  return level ? COVERAGE_COLOR[level] : undefined;
+}
+
 export function CoverageBadge({ level }: { level: CoverageLevel | undefined }) {
   if (!level) return null;
   return <Badge text={level} color={COVERAGE_COLOR[level]} />;
+}
+
+/**
+ * Depth chip that piggy-backs on the coverage level for color so the two cells
+ * read as one ladder. Falls back to gray when the level is missing — the depth
+ * is still meaningful on its own (just less interpretable without a level).
+ */
+export function DepthBadge({
+  depth,
+  level,
+}: {
+  depth: number | null | undefined;
+  level: CoverageLevel | undefined;
+}) {
+  if (depth === null || depth === undefined) return null;
+  return <Badge text={`Depth ${depth}`} color={coverageBadgeColor(level) ?? 'gray'} />;
 }
 
 export function SuggestionKindBadge({

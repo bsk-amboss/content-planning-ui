@@ -10,6 +10,7 @@ import {
   sourceLabel,
 } from '@/lib/workflows/lib/sources';
 import { ApproveButton } from './approve-button';
+import { CancelButton } from './cancel-button';
 import { ResetButton } from './reset-button';
 
 type StageStatus =
@@ -265,6 +266,7 @@ export function StageCard({
     stage?.stage === 'map_codes';
   const isTerminal =
     status === 'completed' || status === 'failed' || status === 'skipped';
+  const isCancellable = status === 'running' || status === 'awaiting_approval';
   const [expanded, setExpanded] = useState(false);
   const evs = events ?? [];
   const hasDetails =
@@ -301,6 +303,13 @@ export function StageCard({
                   stage={
                     stage.stage as 'extract_codes' | 'extract_milestones' | 'map_codes'
                   }
+                />
+              ) : null}
+              {isCancellable && stage ? (
+                <CancelButton
+                  runId={stage.runId}
+                  specialtySlug={specialtySlug}
+                  stage={stageName}
                 />
               ) : null}
               {isTerminal && stage ? (

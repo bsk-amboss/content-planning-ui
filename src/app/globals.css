@@ -65,6 +65,30 @@ body {
 }
 
 .filter-cell {
-  flex: 0 0 200px;
-  min-width: 200px;
+  /* Share row space with siblings and shrink without limit so the row stays
+     on a single line at any viewport width. `min-width: 0` overrides the
+     default `min-width: auto` (which is content-based) — without it the
+     Combobox/Select inside refuses to shrink below its intrinsic width and
+     the noWrap row would overflow the viewport. */
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* Wide variant: 1.5× share of the row. Used for Category and Consolidation
+   where option labels are long. Same `min-width: 0` so it can also shrink. */
+.filter-cell--wide {
+  flex: 1.5 1 0;
+  min-width: 0;
+}
+
+/* The DS Combobox/Select wrapper has no width set, so by default it sizes to
+   its intrinsic content min-width and stops shrinking even when the parent
+   .filter-cell can. Forcing the immediate child to width:100% + min-width:0
+   makes the Combobox track the cell's flex-allotted size precisely — that
+   way the 1:1.5 grow ratio between default and `--wide` cells holds at
+   every viewport width. */
+.filter-cell > *,
+.filter-cell--wide > * {
+  width: 100%;
+  min-width: 0;
 }

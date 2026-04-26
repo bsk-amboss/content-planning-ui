@@ -5,6 +5,23 @@ import type { EmotionCache } from '@emotion/cache';
 import { useServerInsertedHTML } from 'next/navigation';
 import { type ReactNode, useState } from 'react';
 
+// The DS ships `theme.variables.zIndex.dropdown = 1`, the same z-index that
+// our sticky table headers (z=1) use. Without overriding, Combobox/Select
+// menus that portal to body land at the same z as the sticky thead — which
+// in DOM order means they sit above table cells but visually conflict with
+// the headers. Bumping the dropdown layer to 100 keeps the menu cleanly
+// above any sticky surface in the app.
+const theme = {
+  ...light,
+  variables: {
+    ...light.variables,
+    zIndex: {
+      ...light.variables.zIndex,
+      dropdown: 100,
+    },
+  },
+};
+
 export function EmotionRegistry({ children }: { children: ReactNode }) {
   const [registry] = useState(() => {
     const cache: EmotionCache = createCache({ key: 'amboss' });
@@ -45,7 +62,7 @@ export function EmotionRegistry({ children }: { children: ReactNode }) {
 
   return (
     <CacheProvider value={registry.cache}>
-      <ThemeProvider theme={light}>{children}</ThemeProvider>
+      <ThemeProvider theme={theme}>{children}</ThemeProvider>
     </CacheProvider>
   );
 }

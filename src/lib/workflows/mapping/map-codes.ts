@@ -3,19 +3,17 @@
  *
  * Fans out per-code MCP agent calls with concurrency cap 10, writing each
  * mapping through to the `codes` row as soon as it resolves. When every
- * unmapped code is done, the stage pauses on an approval hook; on approve
- * the run transitions to completed, on reject the reset cascade clears
- * mapping fields so the user can rerun.
+ * unmapped code is done, the stage transitions straight to `completed` —
+ * results are visible row-by-row in the codes table as they land, so an
+ * explicit approval gate doesn't add value here.
  */
 
-import { createHook, FatalError } from 'workflow';
+import { FatalError } from 'workflow';
 import { mapAndValidateCode } from '../lib/amboss-mcp';
-import { type ApprovalPayload, approvalToken } from '../lib/approval';
 import {
   listUnmappedCodes,
   loadSpecialtyForMapping,
   type MappingFilter,
-  markStageAwaitingApproval,
   markStageCompleted,
   markStageFailed,
   markStageRunning,
@@ -127,17 +125,12 @@ export async function mapCodesWorkflow(input: MapCodesInput) {
     });
 
     if (unmapped.length === 0) {
-      await markStageAwaitingApproval(input.runId, 'map_codes', {
-        mapped: 0,
-        codes: 0,
-        escalations: 0,
-        invalidIdsRemaining: 0,
-      });
+      await markStageCompleted(input.runId, 'map_codes');
       await logEvent({
         runId: input.runId,
         stage: 'map_codes',
         level: 'info',
-        message: 'Nothing to map — awaiting approval to close the stage.',
+        message: 'Nothing to map — closing stage.',
       });
     } else {
       let escalations = 0;
@@ -164,10 +157,16 @@ export async function mapCodesWorkflow(input: MapCodesInput) {
           if (r.model.startsWith('claude-')) escalations += 1;
           if (r.unresolved) unresolvedCount += 1;
         }
+        // Surface incremental progress so polling clients can pick it up
+        // before the workflow reaches the final stage write.
+        await revalidateSpecialtyCache(input.specialtySlug);
       }
 
       const totals = await aggregateStageMetrics(input.runId, 'map_codes');
-      await markStageAwaitingApproval(input.runId, 'map_codes', {
+      // Stash the run-level summary on the stage row alongside completion so
+      // the pipeline card still shows mapped/escalations/cost without going
+      // through awaiting_approval.
+      await markStageCompleted(input.runId, 'map_codes', undefined, {
         mapped: unmapped.length,
         codes: unmapped.length,
         escalations,
@@ -184,7 +183,7 @@ export async function mapCodesWorkflow(input: MapCodesInput) {
         runId: input.runId,
         stage: 'map_codes',
         level: 'info',
-        message: `Mapping complete. Awaiting approval — ${unmapped.length} codes · ${escalations} escalated · ${unresolvedCount} unresolved.`,
+        message: `Mapping complete — ${unmapped.length} codes · ${escalations} escalated · ${unresolvedCount} unresolved.`,
         metrics: {
           durationMs: totals.durationMs ?? undefined,
           inputTokens: totals.inputTokens,
@@ -195,20 +194,6 @@ export async function mapCodesWorkflow(input: MapCodesInput) {
       });
     }
 
-    using hook = createHook<ApprovalPayload>({
-      token: approvalToken(input.runId, 'map_codes'),
-    });
-    const approval = await hook;
-
-    if (!approval.approved) {
-      const reason = approval.note ? `: ${approval.note}` : '';
-      await markStageFailed(input.runId, 'map_codes', `Rejected${reason}`);
-      await updatePipelineRunStatus(input.runId, 'failed');
-      await revalidateSpecialtyCache(input.specialtySlug);
-      throw new FatalError('Map codes rejected');
-    }
-
-    await markStageCompleted(input.runId, 'map_codes', approval.approvedBy);
     await updatePipelineRunStatus(input.runId, 'completed');
     await revalidateSpecialtyCache(input.specialtySlug);
   } catch (e) {

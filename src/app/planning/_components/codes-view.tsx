@@ -1,21 +1,24 @@
 'use client';
 
-import { Stack, Text } from '@amboss/design-system';
-import { useSearchParams } from 'next/navigation';
+import { Badge, Stack, Text } from '@amboss/design-system';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Code } from '@/lib/repositories/types';
-import {
-  type CodeFilterOptions,
-  type CodeFilterState,
-  CodesFilter,
-} from './codes-filter';
+import { COVERAGE_LEVELS, type Code } from '@/lib/repositories/types';
+import { CodeDetailModal, type DetailTarget } from './code-detail-modal';
 import { type Column, DataTable } from './data-table';
-import { CoverageBadge } from './suggestion-badge';
+import { CoverageBadge, DepthBadge } from './suggestion-badge';
 
-function countSummary(code: Code) {
-  const newArticles = code.newArticlesNeeded?.length ?? 0;
-  const updates = code.existingArticleUpdates?.length ?? 0;
-  return `${newArticles} new / ${updates} updates`;
+function countCoveredSections(items: unknown): number {
+  if (!Array.isArray(items)) return 0;
+  let n = 0;
+  for (const item of items) {
+    const sec = (item as { sections?: unknown }).sections;
+    if (!sec) continue;
+    if (Array.isArray(sec)) n += sec.length;
+    else if (typeof sec === 'object')
+      n += Object.keys(sec as Record<string, unknown>).length;
+  }
+  return n;
 }
 
 // Coverage level has a natural rank (none < student < ... < specialist) that
@@ -29,170 +32,478 @@ const COVERAGE_RANK: Record<string, number> = {
   specialist: 5,
 };
 
-function suggestionsCount(code: Code): number {
-  return (
-    (code.newArticlesNeeded?.length ?? 0) + (code.existingArticleUpdates?.length ?? 0)
-  );
-}
-
-const columns: Column<Code>[] = [
-  {
-    key: 'source',
-    label: 'Source',
-    render: (r) => r.source ?? '—',
-    width: 80,
-    accessor: (r) => r.source ?? null,
-    type: 'string',
-  },
-  {
-    key: 'code',
-    label: 'Code',
-    render: (r) => <code>{r.code}</code>,
-    width: 180,
-    accessor: (r) => r.code ?? null,
-    type: 'string',
-  },
-  {
-    key: 'description',
-    label: 'Description',
-    render: (r) => r.description ?? '',
-    accessor: (r) => r.description ?? null,
-    type: 'string',
-  },
-  {
-    key: 'category',
-    label: 'Category',
-    render: (r) => r.category ?? '—',
-    accessor: (r) => r.category ?? null,
-    type: 'string',
-  },
-  {
-    key: 'consolidationCategory',
-    label: 'Consolidation category',
-    render: (r) => r.consolidationCategory ?? '—',
-    accessor: (r) => r.consolidationCategory ?? null,
-    type: 'string',
-  },
-  {
-    key: 'coverage',
-    label: 'Coverage',
-    render: (r) => <CoverageBadge level={r.coverageLevel} />,
-    width: 140,
-    // Sort as a number (rank) so asc/desc follow the coverage ladder rather
-    // than alphabetical order of the level label.
-    accessor: (r) => (r.coverageLevel ? (COVERAGE_RANK[r.coverageLevel] ?? -1) : null),
-    type: 'number',
-  },
-  {
-    key: 'depth',
-    label: 'Depth',
-    render: (r) => r.depthOfCoverage ?? '—',
-    width: 60,
-    align: 'right',
-    accessor: (r) => r.depthOfCoverage ?? null,
-    type: 'number',
-    filterable: true,
-  },
-  {
-    key: 'suggestions',
-    label: 'Suggestions',
-    render: countSummary,
-    width: 140,
-    // Sort/filter by total suggestion count (new + updates) since the
-    // rendered string "N new / M updates" isn't comparable.
-    accessor: suggestionsCount,
-    type: 'number',
-    filterable: true,
-  },
+// Predefined filter choices for boolean / categorical columns. Numeric columns
+// use the existing comparison filter; string columns without an entry here
+// derive their options from unique row values.
+const COVERAGE_FILTER_OPTIONS = COVERAGE_LEVELS.map((v) => ({ value: v, label: v }));
+const IN_AMBOSS_FILTER_OPTIONS = [
+  { value: 'yes', label: 'Yes' },
+  { value: 'no', label: 'No' },
 ];
 
-function uniqueStrings(values: (string | undefined)[]): string[] {
-  const set = new Set<string>();
-  for (const v of values) if (v) set.add(v);
-  return [...set].sort((a, b) => a.localeCompare(b));
-}
+export function CodesView({
+  codes: initialCodes,
+  specialtySlug,
+  canEdit,
+  lockStatus,
+  inFlightCodes,
+}: {
+  codes: Code[];
+  specialtySlug: string;
+  canEdit: boolean;
+  lockStatus: string | null;
+  inFlightCodes: string[];
+}) {
+  const router = useRouter();
+  const inFlightSet = useMemo(() => new Set(inFlightCodes), [inFlightCodes]);
 
-const EMPTY_FILTERS: CodeFilterState = {
-  source: '',
-  category: '',
-  consolidationCategory: '',
-  coverage: '',
-  inAmboss: '',
-};
-
-export function CodesView({ codes }: { codes: Code[] }) {
-  const params = useSearchParams();
-
-  const [filters, setFilters] = useState<CodeFilterState>(() => ({
-    source: params.get('source') ?? '',
-    category: params.get('category') ?? '',
-    consolidationCategory: params.get('consolidationCategory') ?? '',
-    coverage: params.get('coverage') ?? '',
-    inAmboss: params.get('inAmboss') ?? '',
-  }));
-
-  // Sync URL without triggering a router transition (keeps the big DataTable
-  // from re-rendering on every keystroke).
+  // While any code is being mapped, poll the server every few seconds so rows
+  // pick up their results as the workflow writes them through. The poll stops
+  // automatically when the in-flight set comes back empty (server-driven —
+  // finished codes drop out of `listInFlightMappings`).
   useEffect(() => {
-    const p = new URLSearchParams();
-    for (const [k, v] of Object.entries(filters)) if (v) p.set(k, v);
-    const qs = p.toString();
-    const next = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
-    window.history.replaceState(null, '', next);
-  }, [filters]);
+    if (inFlightSet.size === 0) return;
+    const id = setInterval(() => router.refresh(), 3000);
+    return () => clearInterval(id);
+  }, [inFlightSet, router]);
 
-  const setFilter = useCallback(
-    (key: keyof CodeFilterState, value: string) =>
-      setFilters((prev) => ({ ...prev, [key]: value })),
+  // Mirror the server-loaded codes into local state so inline edits and the
+  // Map/Remap action can repaint optimistically before the server round-trip
+  // + router.refresh() completes. When the server sends a new list, merge it
+  // into the existing array keyed by `code` so a row that was at position N
+  // before mapping stays at position N afterwards — only the row's data is
+  // updated, the order isn't reshuffled by whatever the server query returns.
+  const [codes, setCodes] = useState<Code[]>(initialCodes);
+  useEffect(() => {
+    setCodes((prev) => {
+      if (prev.length === 0) return initialCodes;
+      const byCode = new Map(initialCodes.map((c) => [c.code, c]));
+      const seen = new Set<string>();
+      const merged: Code[] = [];
+      for (const c of prev) {
+        const next = byCode.get(c.code);
+        if (next) {
+          merged.push(next);
+          seen.add(c.code);
+        }
+      }
+      for (const c of initialCodes) {
+        if (!seen.has(c.code)) merged.push(c);
+      }
+      return merged;
+    });
+  }, [initialCodes]);
+
+  const [selected, setSelected] = useState<{
+    row: Code;
+    target: DetailTarget;
+  } | null>(null);
+
+  const onOpenDetail = useCallback(
+    (r: Code, target: DetailTarget) => setSelected({ row: r, target }),
     [],
   );
-  const clear = useCallback(() => setFilters(EMPTY_FILTERS), []);
 
-  const options: CodeFilterOptions = useMemo(
-    () => ({
-      sources: uniqueStrings(codes.map((c) => c.source)),
-      categories: uniqueStrings(codes.map((c) => c.category)),
-      consolidationCategories: uniqueStrings(codes.map((c) => c.consolidationCategory)),
-    }),
-    [codes],
-  );
-
-  const filtered = useMemo(
-    () =>
-      codes.filter((c) => {
-        if (filters.source && c.source !== filters.source) return false;
-        if (filters.category && c.category !== filters.category) return false;
-        if (
-          filters.consolidationCategory &&
-          c.consolidationCategory !== filters.consolidationCategory
-        )
-          return false;
-        if (filters.coverage && c.coverageLevel !== filters.coverage) return false;
-        if (filters.inAmboss === 'yes' && c.isInAMBOSS !== true) return false;
-        if (filters.inAmboss === 'no' && c.isInAMBOSS !== false) return false;
-        return true;
-      }),
-    [codes, filters],
-  );
+  const columns = useMemo<Column<Code>[]>(() => {
+    // The metadata cells all open the row's detail modal. Clicking any of
+    // them (Source, Code, Description, Category, Consolidation category) is
+    // the universal "open this row" affordance — works for unmapped rows
+    // too, since the coverage chips don't render until a code is mapped.
+    const openMeta = (r: Code) => onOpenDetail(r, 'coverage-articles');
+    return [
+      {
+        key: 'source',
+        label: 'Source',
+        render: (r) => (
+          <ClickableCell onClick={() => openMeta(r)} title="Open code details">
+            {r.source ?? '—'}
+          </ClickableCell>
+        ),
+        width: 80,
+        accessor: (r) => r.source ?? null,
+        type: 'string',
+        filterable: true,
+        group: 'metadata',
+      },
+      {
+        key: 'code',
+        label: 'Code',
+        render: (r) => (
+          <ClickableCell onClick={() => openMeta(r)} title="Open code details">
+            <code>{r.code}</code>
+          </ClickableCell>
+        ),
+        width: 180,
+        accessor: (r) => r.code ?? null,
+        type: 'string',
+        group: 'metadata',
+      },
+      {
+        key: 'description',
+        label: 'Description',
+        // Default widths matter under tableLayout: fixed — without them, the
+        // table squeezes these columns to whatever's left after the explicit
+        // widths and the nowrap headers overflow into neighbors. Drag-resize
+        // still overrides on a per-column basis.
+        width: 320,
+        render: (r) => (
+          <ClickableCell onClick={() => openMeta(r)} title="Open code details">
+            <span style={{ textAlign: 'left' }}>{r.description ?? ''}</span>
+          </ClickableCell>
+        ),
+        accessor: (r) => r.description ?? null,
+        type: 'string',
+        group: 'metadata',
+      },
+      {
+        key: 'category',
+        label: 'Category',
+        width: 200,
+        render: (r) => (
+          <ClickableCell onClick={() => openMeta(r)} title="Open code details">
+            {r.category ?? '—'}
+          </ClickableCell>
+        ),
+        accessor: (r) => r.category ?? null,
+        type: 'string',
+        filterable: true,
+        group: 'metadata',
+      },
+      {
+        key: 'consolidationCategory',
+        label: 'Consolidation category',
+        width: 220,
+        render: (r) => (
+          <ClickableCell onClick={() => openMeta(r)} title="Open code details">
+            {r.consolidationCategory ?? '—'}
+          </ClickableCell>
+        ),
+        accessor: (r) => r.consolidationCategory ?? null,
+        type: 'string',
+        filterable: true,
+        group: 'metadata',
+      },
+      {
+        key: 'inAmboss',
+        label: 'In AMBOSS',
+        width: 110,
+        render: (r) => {
+          if (inFlightSet.has(r.code)) return <MappingPulse />;
+          if (r.isInAMBOSS === true) {
+            return (
+              <ClickableCell onClick={() => onOpenDetail(r, 'coverage-articles')}>
+                <Badge text="Yes" color="green" />
+              </ClickableCell>
+            );
+          }
+          if (r.isInAMBOSS === false) {
+            return (
+              <ClickableCell onClick={() => onOpenDetail(r, 'coverage-articles')}>
+                <Badge text="No" color="red" />
+              </ClickableCell>
+            );
+          }
+          return <EmptyChip />;
+        },
+        // true → 1, false → 0, unknown → null so unmapped rows stay at the
+        // bottom regardless of sort direction.
+        accessor: (r) => (r.isInAMBOSS === true ? 1 : r.isInAMBOSS === false ? 0 : null),
+        type: 'boolean',
+        filterable: true,
+        // Map the boolean to friendly Yes/No values; unmapped rows return
+        // undefined so they don't fall under either bucket and are excluded
+        // when the user picks Yes or No.
+        filterValue: (r) =>
+          r.isInAMBOSS === true ? 'yes' : r.isInAMBOSS === false ? 'no' : undefined,
+        filterOptions: IN_AMBOSS_FILTER_OPTIONS,
+        group: 'coverage',
+      },
+      {
+        key: 'coverage',
+        label: 'Coverage',
+        render: (r) => {
+          if (inFlightSet.has(r.code)) return <MappingPulse />;
+          if (!r.coverageLevel) return <EmptyChip />;
+          return (
+            <ClickableCell onClick={() => onOpenDetail(r, 'coverage-articles')}>
+              <CoverageBadge level={r.coverageLevel} />
+            </ClickableCell>
+          );
+        },
+        width: 140,
+        // Sort as a number (rank) so asc/desc follow the coverage ladder rather
+        // than alphabetical order of the level label.
+        accessor: (r) =>
+          r.coverageLevel ? (COVERAGE_RANK[r.coverageLevel] ?? -1) : null,
+        type: 'number',
+        // For the filter dropdown we want the level *string* (not the rank),
+        // shown as a fixed list of the six levels rather than unique values.
+        filterable: true,
+        filterValue: (r) => r.coverageLevel ?? undefined,
+        filterOptions: COVERAGE_FILTER_OPTIONS,
+        group: 'coverage',
+      },
+      {
+        key: 'depth',
+        label: 'Depth',
+        render: (r) => {
+          if (inFlightSet.has(r.code)) return <MappingPulse />;
+          if (r.depthOfCoverage === undefined || r.depthOfCoverage === null) {
+            return <EmptyChip />;
+          }
+          return (
+            <ClickableCell onClick={() => onOpenDetail(r, 'coverage-articles')}>
+              <DepthBadge depth={r.depthOfCoverage} level={r.coverageLevel} />
+            </ClickableCell>
+          );
+        },
+        width: 90,
+        accessor: (r) => r.depthOfCoverage ?? null,
+        type: 'number',
+        filterable: true,
+        group: 'coverage',
+      },
+      {
+        key: 'articlesWhereCoverageIs',
+        label: 'Articles',
+        width: 180,
+        render: (r) => {
+          const arr = r.articlesWhereCoverageIs ?? [];
+          const articles = arr.length;
+          const sections = countCoveredSections(arr);
+          if (articles === 0) return <EmptyChip />;
+          return (
+            <ChipButton
+              label={
+                sections > 0
+                  ? `${articles} article${articles === 1 ? '' : 's'} · ${sections} section${sections === 1 ? '' : 's'}`
+                  : `${articles} article${articles === 1 ? '' : 's'}`
+              }
+              tone="coverage"
+              onClick={() => onOpenDetail(r, 'coverage-articles')}
+            />
+          );
+        },
+        accessor: (r) => r.articlesWhereCoverageIs?.length ?? 0,
+        type: 'number',
+        filterable: true,
+        group: 'coverage',
+      },
+      {
+        key: 'existingArticleUpdates',
+        label: 'Updates',
+        width: 130,
+        render: (r) => {
+          const n = r.existingArticleUpdates?.length ?? 0;
+          if (n === 0) return <EmptyChip />;
+          return (
+            <ChipButton
+              label={`${n} update${n === 1 ? '' : 's'}`}
+              tone="suggestions"
+              onClick={() => onOpenDetail(r, 'suggestion-updates')}
+            />
+          );
+        },
+        accessor: (r) => r.existingArticleUpdates?.length ?? 0,
+        type: 'number',
+        filterable: true,
+        group: 'suggestions',
+      },
+      {
+        key: 'newArticlesNeeded',
+        label: 'New articles',
+        width: 130,
+        render: (r) => {
+          const n = r.newArticlesNeeded?.length ?? 0;
+          if (n === 0) return <EmptyChip />;
+          return (
+            <ChipButton
+              label={`${n} new`}
+              tone="suggestions"
+              onClick={() => onOpenDetail(r, 'suggestion-new-articles')}
+            />
+          );
+        },
+        accessor: (r) => r.newArticlesNeeded?.length ?? 0,
+        type: 'number',
+        filterable: true,
+        group: 'suggestions',
+      },
+    ];
+  }, [onOpenDetail, inFlightSet]);
 
   return (
     <Stack space="m">
-      <CodesFilter
-        options={options}
-        filters={filters}
-        onChange={setFilter}
-        onClear={clear}
-      />
-      <Text color="secondary">
-        {filtered.length.toLocaleString()} of {codes.length.toLocaleString()} rows
-        {filtered.length !== codes.length ? ' (filtered)' : ''} from Code_Amboss_Mapping.
-      </Text>
+      {!canEdit ? (
+        <Text color="secondary">
+          Consolidation is active{lockStatus ? ` (${lockStatus})` : ''} — edits and
+          re-mapping of already-mapped codes are disabled. Reset the consolidation stage
+          on the pipeline page to re-enable. Unmapped codes can still be mapped from here.
+        </Text>
+      ) : null}
       <DataTable
-        rows={filtered}
+        rows={codes}
         columns={columns}
         getRowKey={(r, i) => `${r.code}-${i}`}
         emptyText="No codes match the current filters."
+        leadingNote={`${codes.length.toLocaleString()} rows`}
+      />
+      <CodeDetailModal
+        row={selected?.row ?? null}
+        target={selected?.target}
+        specialtySlug={specialtySlug}
+        canEdit={canEdit}
+        lockStatus={lockStatus}
+        inFlight={selected ? inFlightSet.has(selected.row.code) : false}
+        onClose={() => setSelected(null)}
       />
     </Stack>
   );
 }
+
+const CHIP_TONES: Record<
+  'coverage' | 'suggestions',
+  { bg: string; fg: string; border: string }
+> = {
+  coverage: {
+    bg: 'rgba(34, 139, 80, 0.10)',
+    fg: 'rgb(15, 95, 50)',
+    border: 'rgb(34, 139, 80)',
+  },
+  suggestions: {
+    bg: 'rgba(217, 119, 6, 0.12)',
+    fg: 'rgb(133, 77, 14)',
+    border: 'rgb(217, 119, 6)',
+  },
+};
+
+/**
+ * Wraps cell content so the whole rendered area is clickable. Used both for
+ * coverage cells (In AMBOSS / Coverage / Depth) deep-linking into the modal,
+ * and for metadata cells (Source / Code / Description / Category / Consol.)
+ * which provide the universal "open this row" affordance — including for
+ * unmapped rows that have no chips.
+ */
+function ClickableCell({
+  onClick,
+  title = 'Open code details',
+  children,
+}: {
+  onClick: () => void;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      style={{
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        cursor: 'pointer',
+        font: 'inherit',
+        color: 'inherit',
+        textAlign: 'inherit',
+        display: 'inline-flex',
+        alignItems: 'center',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ChipButton({
+  label,
+  tone,
+  onClick,
+}: {
+  label: string;
+  tone: 'coverage' | 'suggestions';
+  onClick: () => void;
+}) {
+  const c = CHIP_TONES[tone];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Open breakdown"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        background: c.bg,
+        color: c.fg,
+        border: `1px solid ${c.border}`,
+        borderRadius: 999,
+        padding: '2px 10px',
+        fontSize: 12,
+        fontWeight: 600,
+        font: 'inherit',
+        cursor: 'pointer',
+        lineHeight: 1.4,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span>{label}</span>
+      <span aria-hidden style={{ fontSize: 11, opacity: 0.8 }}>
+        ›
+      </span>
+    </button>
+  );
+}
+
+function EmptyChip() {
+  return (
+    <span
+      style={{
+        color: 'var(--ads-c-text-tertiary, rgba(0,0,0,0.35))',
+        fontSize: 12,
+      }}
+    >
+      —
+    </span>
+  );
+}
+
+/**
+ * Live "Mapping…" indicator shown in the row's status cells while the code is
+ * part of an active `running` map_codes run. The pulse keyframes are inlined
+ * once via a global <style> tag so we don't drag in Emotion just for this.
+ */
+function MappingPulse() {
+  return (
+    <>
+      <style>{MAPPING_PULSE_KEYFRAMES}</style>
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: 12,
+          fontWeight: 600,
+          color: 'rgb(30, 64, 175)',
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: 999,
+            background: 'rgb(59, 130, 246)',
+            animation: 'codes-mapping-pulse 1.2s ease-in-out infinite',
+          }}
+        />
+        Mapping…
+      </span>
+    </>
+  );
+}
+
+const MAPPING_PULSE_KEYFRAMES = `@keyframes codes-mapping-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}`;

@@ -143,6 +143,7 @@ export async function markStageCompleted(
   runId: string,
   stage: StageName,
   approvedBy?: string,
+  outputSummary?: Record<string, unknown>,
 ): Promise<void> {
   'use step';
   console.log('[pipeline] markStageCompleted', { runId, stage, approvedBy });
@@ -153,6 +154,7 @@ export async function markStageCompleted(
       status: 'completed',
       finishedAt: new Date(),
       ...(approvedBy ? { approvedAt: new Date(), approvedBy } : {}),
+      ...(outputSummary ? { outputSummary } : {}),
     })
     .where(and(eq(pipelineStages.runId, runId), eq(pipelineStages.stage, stage)));
 }
@@ -386,6 +388,35 @@ export async function writeCodeMapping(
       improvements: mapping.suggestion.improvement || null,
       metadata: mapping.currentAMBOSSContentMetadata ?? null,
       fullJsonOutput: mapping as unknown as Record<string, unknown>,
+    })
+    .where(and(eq(codesTable.specialtySlug, specialtySlug), eq(codesTable.code, code)));
+}
+
+/**
+ * Clear mapping-derived fields for a single code so it can be remapped from
+ * scratch. Mirrors the per-specialty clear in `reset.ts:58-82` but scoped to
+ * one row; used by the per-row "Remap" action in the codes table.
+ */
+export async function clearMappingForCode(
+  specialtySlug: string,
+  code: string,
+): Promise<void> {
+  console.log('[pipeline] clearMappingForCode', { specialtySlug, code });
+  const db = getDb();
+  await db
+    .update(codesTable)
+    .set({
+      isInAmboss: null,
+      articlesWhereCoverageIs: null,
+      notes: null,
+      gaps: null,
+      coverageLevel: null,
+      depthOfCoverage: null,
+      existingArticleUpdates: null,
+      newArticlesNeeded: null,
+      improvements: null,
+      metadata: null,
+      fullJsonOutput: null,
     })
     .where(and(eq(codesTable.specialtySlug, specialtySlug), eq(codesTable.code, code)));
 }
