@@ -112,6 +112,7 @@ export function DataTable<T>({
   emptyText = 'No rows to display.',
   getRowKey,
   leadingNote,
+  storageKey,
 }: {
   rows: T[];
   columns: Column<T>[];
@@ -121,6 +122,13 @@ export function DataTable<T>({
    *  the left of the Columns dropdown. Uses DS Text styling so it matches
    *  surrounding copy. */
   leadingNote?: string;
+  /** When set, the table's interactive state — sort, numeric + string
+   *  filters, hidden columns, drag-resized widths — is persisted to
+   *  `localStorage` under this key and reloaded on the next mount. Pick a
+   *  key that's stable per view (e.g. `codes-table:<specialtySlug>`).
+   *  Without it the table behaves the same as before: state is in-memory
+   *  only and resets on navigation. */
+  storageKey?: string;
 }) {
   const [sort, setSort] = useState<SortState>(null);
   const [numFilters, setNumFilters] = useState<Record<string, NumericFilter | null>>({});
@@ -149,6 +157,61 @@ export function DataTable<T>({
       else next.add(key);
       return next;
     });
+
+  // Persisted-state plumbing. `hydrated` flips to true after the load effect
+  // runs so the save effect doesn't immediately overwrite stored state with
+  // the empty defaults. Sets are serialized as arrays for JSON storage.
+  const hydrated = useRef(false);
+  useEffect(() => {
+    hydrated.current = false;
+    if (!storageKey || typeof window === 'undefined') {
+      hydrated.current = true;
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          v?: number;
+          sort?: SortState;
+          numFilters?: Record<string, NumericFilter | null>;
+          stringFilters?: Record<string, string | null>;
+          hidden?: string[];
+          widths?: Record<string, number>;
+        };
+        if (parsed.v === 1) {
+          if (parsed.sort !== undefined) setSort(parsed.sort);
+          if (parsed.numFilters) setNumFilters(parsed.numFilters);
+          if (parsed.stringFilters) setStringFilters(parsed.stringFilters);
+          if (Array.isArray(parsed.hidden)) setHidden(new Set(parsed.hidden));
+          if (parsed.widths) setWidths(parsed.widths);
+        }
+      }
+    } catch {
+      // Corrupted entry — fall back to defaults silently rather than crashing.
+    }
+    hydrated.current = true;
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (!storageKey || !hydrated.current || typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          v: 1,
+          sort,
+          numFilters,
+          stringFilters,
+          hidden: [...hidden],
+          widths,
+        }),
+      );
+    } catch {
+      // QuotaExceeded or storage disabled — non-fatal; user just loses
+      // persistence for this session.
+    }
+  }, [storageKey, sort, numFilters, stringFilters, hidden, widths]);
 
   const filteredRows = useMemo(() => {
     const numEntries = Object.entries(numFilters).filter(
@@ -274,6 +337,14 @@ export function DataTable<T>({
         )}
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           <ColumnsMenu columns={columns} hidden={hidden} onToggle={toggleHidden} />
+          <Button
+            variant="tertiary"
+            size="s"
+            onClick={() => setSort(null)}
+            disabled={sort === null}
+          >
+            Reset sort
+          </Button>
           <Button
             variant="tertiary"
             size="s"
@@ -418,6 +489,11 @@ function HeaderCell<T>({
         textAlign: column.align ?? 'left',
         padding: '10px 12px',
         borderBottom: '1px solid var(--ads-c-divider, rgba(0,0,0,0.1))',
+        // Vertical divider between columns so the resize handle's position
+        // is visually obvious. The handle is a 6px-wide invisible strip on
+        // the right edge — without a divider users couldn't tell where one
+        // column ended and the next began.
+        borderRight: '1px solid var(--ads-c-divider, rgba(0,0,0,0.1))',
         fontWeight: 600,
         whiteSpace: 'nowrap',
         width,
@@ -1036,7 +1112,7 @@ function TableCells<T>({
           style={{
             padding: '10px 12px',
             borderBottom: '1px solid var(--ads-c-divider, rgba(0,0,0,0.05))',
-            verticalAlign: 'top',
+            verticalAlign: 'middle',
             textAlign: c.align ?? 'left',
             maxWidth: 360,
             background: stripe && c.group ? GROUP_STYLES[c.group].stripe : 'transparent',

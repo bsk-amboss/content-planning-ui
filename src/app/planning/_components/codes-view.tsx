@@ -245,7 +245,7 @@ export function CodesView({
       },
       {
         key: 'depth',
-        label: 'Depth',
+        label: 'Score',
         render: (r) => {
           if (inFlightSet.has(r.code)) return <MappingPulse />;
           if (r.depthOfCoverage === undefined || r.depthOfCoverage === null) {
@@ -347,6 +347,7 @@ export function CodesView({
         getRowKey={(r, i) => `${r.code}-${i}`}
         emptyText="No codes match the current filters."
         leadingNote={`${codes.length.toLocaleString()} rows`}
+        storageKey={`codes-table:${specialtySlug}`}
       />
       <CodeDetailModal
         row={selected?.row ?? null}

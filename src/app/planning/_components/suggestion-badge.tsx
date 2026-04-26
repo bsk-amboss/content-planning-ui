@@ -33,9 +33,10 @@ export function CoverageBadge({ level }: { level: CoverageLevel | undefined }) {
 }
 
 /**
- * Depth chip that piggy-backs on the coverage level for color so the two cells
- * read as one ladder. Falls back to gray when the level is missing — the depth
- * is still meaningful on its own (just less interpretable without a level).
+ * Score chip that piggy-backs on the coverage level for color so the two
+ * cells read as one ladder. Renders just the integer — the column header
+ * supplies the "Score" label, and the modal renders it next to the coverage
+ * badge for context.
  */
 export function DepthBadge({
   depth,
@@ -45,7 +46,7 @@ export function DepthBadge({
   level: CoverageLevel | undefined;
 }) {
   if (depth === null || depth === undefined) return null;
-  return <Badge text={`Depth ${depth}`} color={coverageBadgeColor(level) ?? 'gray'} />;
+  return <Badge text={String(depth)} color={coverageBadgeColor(level) ?? 'gray'} />;
 }
 
 export function SuggestionKindBadge({
