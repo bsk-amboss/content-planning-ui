@@ -1551,7 +1551,13 @@ function VirtualizedBody<T>(props: BodyProps<T>) {
     <div
       ref={parentRef}
       style={{
-        maxHeight: 'calc(100vh - 120px)',
+        // `contain: strict` (below) implies `contain: size`, which tells the
+        // browser to derive the box's height from layout rules alone — child
+        // intrinsic size is ignored. With only `maxHeight` set, that
+        // collapses the scroll container to 0 effective height, the
+        // virtualizer measures clientHeight=0, and zero rows render. Pinning
+        // an explicit `height` gives the containment something to bind to.
+        height: 'calc(100vh - 120px)',
         overflow: 'auto',
         border: '1px solid var(--ads-c-divider, rgba(0,0,0,0.1))',
         borderRadius: 6,
