@@ -19,6 +19,8 @@
     "db:studio": "dotenv -e .env.local -- drizzle-kit studio",
     "db:seed": "dotenv -e .env.local -- tsx scripts/seed-from-xlsx.ts",
     "db:import-board": "dotenv -e .env.local -- tsx scripts/import-board-mapping.ts",
+    "db:import-milestones": "dotenv -e .env.local -- tsx scripts/import-milestones.ts",
+    "db:mark-imported": "dotenv -e .env.local -- tsx scripts/mark-imported.ts",
     "db:refresh-amboss-library": "dotenv -e .env.local -- tsx scripts/refresh-amboss-library.ts",
     "wf:extract": "dotenv -e .env.local -- tsx scripts/start-extract.ts"
   },
