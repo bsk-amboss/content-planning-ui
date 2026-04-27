@@ -111,12 +111,26 @@ type SortState = { key: string; dir: 'asc' | 'desc' } | null;
 type NumOp = '>' | '>=' | '<' | '<=' | '=' | '!=';
 type NumericFilter = { op: NumOp; value: number };
 
-// Switch to virtualized rendering early. Virtualization renders only the rows
-// in (and slightly around) the visible viewport, so initial paint cost stays
-// roughly constant regardless of total row count. Below this threshold the
-// plain (non-virtualized) body is fine and avoids the fixed-height container
-// that virtualization needs.
-const VIRTUALIZE_THRESHOLD = 30;
+// Always virtualize: only the rows in (and slightly around) the visible
+// viewport are rendered, so initial paint cost stays roughly constant
+// regardless of total row count. With the adaptive height in `VirtualizedBody`,
+// short lists collapse to their natural size instead of locking to the
+// viewport — so virtualization is safe everywhere and there's no need for a
+// "small enough to render plain" carve-out.
+const VIRTUALIZE_THRESHOLD = 0;
+
+// Sentinel value used in the categorical filter to represent "rows whose
+// filter value is empty/undefined". Stored in `stringFilters` like any other
+// value, but special-cased in the per-row match loop so blanks become a
+// first-class selectable option in select-style filters. Picked as a string
+// that no real `filterValue` would produce so there's no risk of collision.
+const BLANKS_FILTER_VALUE = '__amboss_blanks__';
+
+// Approximate vertical space taken by the sticky header band (group banner +
+// column header row + a small buffer). Used to compute the virtualized
+// container's natural height so tables shorter than the viewport collapse
+// to fit instead of being pinned to `100vh - 120px`.
+const VIRTUALIZED_HEADER_PX = 80;
 
 const MIN_COLUMN_WIDTH = 50;
 
@@ -135,16 +149,22 @@ export function DataTable<T>({
   emptyText = 'No rows to display.',
   getRowKey,
   leadingNote,
+  countAddendum,
   storageKey,
 }: {
   rows: T[];
   columns: Column<T>[];
   emptyText?: string;
   getRowKey: (row: T, index: number) => string;
-  /** Short caption (e.g. "100 of 200 rows") rendered on the toolbar row to
-   *  the left of the Columns dropdown. Uses DS Text styling so it matches
-   *  surrounding copy. */
+  /** Short caption appended after the row count with a `·` separator. Use
+   *  `countAddendum` instead when you want a parenthetical that depends on
+   *  the live filtered set. */
   leadingNote?: string;
+  /** Optional parenthetical appended to the row count, computed from the
+   *  current filtered set. Returning `undefined` (or an empty string)
+   *  suppresses the parenthetical entirely. Receives `filteredRows` so the
+   *  caller can compute domain-specific summaries (e.g. "X mapped"). */
+  countAddendum?: (filteredRows: T[]) => string | undefined;
   /** When set, the table's interactive state — sort, numeric + string
    *  filters, hidden columns, drag-resized widths — is persisted to
    *  `localStorage` under this key and reloaded on the next mount. Pick a
@@ -300,7 +320,13 @@ export function DataTable<T>({
           : col.accessor
             ? stringifyValue(col.accessor(row))
             : undefined;
-        if (raw === undefined || !values.has(raw)) return false;
+        // Blanks are first-class: a row with no value matches iff the user
+        // explicitly selected the (Blanks) sentinel. Any other selection
+        // excludes blank rows, same as before.
+        const isBlank = raw === undefined || raw === '';
+        if (isBlank) {
+          if (!values.has(BLANKS_FILTER_VALUE)) return false;
+        } else if (!values.has(raw)) return false;
       }
       for (const { needle, col } of txtBindings) {
         if (!col) continue;
@@ -334,6 +360,38 @@ export function DataTable<T>({
         if (v !== undefined && v !== '') set.add(v);
       }
       out[c.key] = [...set].sort((a, b) => a.localeCompare(b));
+    }
+    return out;
+  }, [columns, rows]);
+
+  // Per-column "has at least one blank row" flag for select-mode filters.
+  // Drives whether the (Blanks) option appears in the filter dropdown so
+  // users can isolate rows that the workflow hasn't filled in yet (unmapped
+  // codes, etc.). Mirrors the `useSelectFilter` decision in HeaderMenu so
+  // numeric-range and contains-mode columns are excluded.
+  const blanksByColumn = useMemo(() => {
+    const out: Record<string, boolean> = {};
+    for (const c of columns) {
+      if (!c.filterable) continue;
+      // A `type: 'number'` column without explicit `filterOptions` uses the
+      // numeric-range UI, which has no option list to extend. Columns that
+      // promote to select mode via `filterOptions` are still candidates.
+      if (c.type === 'number' && !c.filterOptions) continue;
+      if (c.filterMode === 'contains') continue;
+      if (!c.filterValue && !c.accessor) continue;
+      let hasBlanks = false;
+      for (const row of rows) {
+        const v = c.filterValue
+          ? c.filterValue(row)
+          : c.accessor
+            ? stringifyValue(c.accessor(row))
+            : undefined;
+        if (v === undefined || v === '') {
+          hasBlanks = true;
+          break;
+        }
+      }
+      out[c.key] = hasBlanks;
     }
     return out;
   }, [columns, rows]);
@@ -427,7 +485,10 @@ export function DataTable<T>({
             shown === total
               ? `${total.toLocaleString()} rows`
               : `Showing ${shown.toLocaleString()} of ${total.toLocaleString()} rows`;
-          const text = leadingNote ? `${countText} · ${leadingNote}` : countText;
+          const addendum = countAddendum?.(filteredRows);
+          const withAddendum =
+            addendum && addendum.trim() !== '' ? `${countText} (${addendum})` : countText;
+          const text = leadingNote ? `${withAddendum} · ${leadingNote}` : withAddendum;
           return (
             <Text size="s" color="secondary">
               {text}
@@ -469,6 +530,7 @@ export function DataTable<T>({
         textFilters={textFilters}
         onTextFilterChange={setTextFilter}
         uniqueFilterValues={uniqueFilterValues}
+        blanksByColumn={blanksByColumn}
         widths={widths}
         onResize={setColumnWidth}
       />
@@ -538,6 +600,7 @@ function HeaderCell<T>({
   textFilter,
   onTextFilterChange,
   uniqueValues,
+  hasBlanks,
   onResize,
   width,
   grouped,
@@ -552,6 +615,7 @@ function HeaderCell<T>({
   textFilter: string | null;
   onTextFilterChange: (key: string, next: string | null) => void;
   uniqueValues: string[] | undefined;
+  hasBlanks: boolean;
   onResize: (key: string, next: number) => void;
   width: number | string | undefined;
   grouped: boolean;
@@ -703,6 +767,7 @@ function HeaderCell<T>({
           stringFilter={stringFilter}
           textFilter={textFilter}
           uniqueValues={uniqueValues}
+          hasBlanks={hasBlanks}
           anchorRef={buttonRef}
           onClose={() => setMenuOpen(false)}
           onSortSet={(dir) => {
@@ -765,6 +830,7 @@ function HeaderMenu<T>({
   stringFilter,
   textFilter,
   uniqueValues,
+  hasBlanks,
   anchorRef,
   onClose,
   onSortSet,
@@ -782,6 +848,7 @@ function HeaderMenu<T>({
   stringFilter: string[] | null;
   textFilter: string | null;
   uniqueValues: string[] | undefined;
+  hasBlanks: boolean;
   anchorRef: React.RefObject<HTMLButtonElement | null>;
   onClose: () => void;
   onSortSet: (dir: 'asc' | 'desc' | null) => void;
@@ -855,8 +922,16 @@ function HeaderMenu<T>({
 
   // Resolve the option list for non-numeric filters: explicit `filterOptions`
   // wins (preserves order + custom labels), else fall back to unique values.
-  const options =
+  // When the column has at least one blank row, prepend a (Blanks) sentinel
+  // so users can isolate or exclude the empty side of the column. We only
+  // add it for the select-style path — numeric ranges and contains don't
+  // have an option list and have no equivalent affordance here yet.
+  const baseOptions =
     column.filterOptions ?? (uniqueValues ?? []).map((v) => ({ value: v, label: v }));
+  const options =
+    hasBlanks && useSelectFilter
+      ? [{ value: BLANKS_FILTER_VALUE, label: '(Blanks)' }, ...baseOptions]
+      : baseOptions;
 
   return createPortal(
     <div
@@ -1737,6 +1812,7 @@ type BodyProps<T> = {
   textFilters: Record<string, string | null>;
   onTextFilterChange: (key: string, next: string | null) => void;
   uniqueFilterValues: Record<string, string[]>;
+  blanksByColumn: Record<string, boolean>;
   widths: Record<string, number>;
   onResize: (key: string, next: number) => void;
 };
@@ -1817,6 +1893,7 @@ function Header<T>({
   textFilters,
   onTextFilterChange,
   uniqueFilterValues,
+  blanksByColumn,
   widths,
   onResize,
 }: Omit<BodyProps<T>, 'rows' | 'getRowKey'>) {
@@ -1874,6 +1951,7 @@ function Header<T>({
             textFilter={textFilters[c.key] ?? null}
             onTextFilterChange={onTextFilterChange}
             uniqueValues={uniqueFilterValues[c.key]}
+            hasBlanks={blanksByColumn[c.key] ?? false}
             onResize={onResize}
             width={effectiveWidth(c, widths)}
             grouped={hasGroups}
@@ -1957,6 +2035,12 @@ function VirtualizedBody<T>(props: BodyProps<T>) {
   const paddingBottom =
     items.length > 0 ? virtualizer.getTotalSize() - items[items.length - 1].end : 0;
 
+  // Adaptive height: short lists collapse to fit (totalSize + sticky-header
+  // band), longer lists clip at `100vh - 120px` so they scroll inside the
+  // viewport. `min()` keeps the value an explicit length so `contain: strict`
+  // (below) still has a definite size to bind to.
+  const naturalHeight = virtualizer.getTotalSize() + VIRTUALIZED_HEADER_PX;
+
   return (
     <div
       ref={parentRef}
@@ -1966,8 +2050,9 @@ function VirtualizedBody<T>(props: BodyProps<T>) {
         // intrinsic size is ignored. With only `maxHeight` set, that
         // collapses the scroll container to 0 effective height, the
         // virtualizer measures clientHeight=0, and zero rows render. Pinning
-        // an explicit `height` gives the containment something to bind to.
-        height: 'calc(100vh - 120px)',
+        // an explicit `height` (via min()) keeps the containment bound while
+        // still letting short lists size to content.
+        height: `min(${naturalHeight}px, calc(100vh - 120px))`,
         overflow: 'auto',
         border: '1px solid var(--ads-c-divider, rgba(0,0,0,0.1))',
         borderRadius: 6,

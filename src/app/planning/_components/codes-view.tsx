@@ -357,6 +357,16 @@ export function CodesView({
         columns={columns}
         getRowKey={(r, i) => `${r.code}-${i}`}
         emptyText="No codes match the current filters."
+        // "Mapped" = the workflow has filled in `isInAMBOSS` (yes or no).
+        // Computed off the live filtered set so the count tracks whatever
+        // slice the user is currently looking at.
+        countAddendum={(filtered) => {
+          const mapped = filtered.reduce(
+            (n, c) => (c.isInAMBOSS === true || c.isInAMBOSS === false ? n + 1 : n),
+            0,
+          );
+          return `${mapped.toLocaleString()} mapped`;
+        }}
         storageKey={`codes-table:${specialtySlug}`}
       />
       <CodeDetailModal
