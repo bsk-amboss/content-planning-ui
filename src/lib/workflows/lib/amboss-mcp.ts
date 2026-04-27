@@ -251,7 +251,11 @@ async function runAgentAttempt(params: {
   system: string;
   userMessage: string;
   tools: Record<string, unknown>;
-}): Promise<{ text: string; usage: ReturnType<typeof pickUsage> }> {
+}): Promise<{
+  text: string;
+  usage: ReturnType<typeof pickUsage>;
+  mcp: { calls: number; toolNames: string[] };
+}> {
   const { modelId, system, userMessage, tools } = params;
   const isClaude = modelId.startsWith('claude-');
   const model = isClaude ? anthropic(modelId) : google(modelId);
@@ -273,7 +277,34 @@ async function runAgentAttempt(params: {
           },
         }),
   });
-  return { text: result.text, usage: pickUsage(result.usage) };
+  return { text: result.text, usage: pickUsage(result.usage), mcp: pickMcp(result) };
+}
+
+/**
+ * Count MCP tool invocations across all reasoning steps. The AI SDK exposes
+ * each round-trip as a `step` with its own `toolCalls`; the top-level
+ * `result.toolCalls` only carries the final step's calls. We unique-name them
+ * so the modal can show "search_article_sections ×3, get_sections ×8" rather
+ * than just a total. Defensively typed because the AI SDK shape isn't
+ * guaranteed to be stable across versions and we'd rather drop the metric
+ * than crash the workflow.
+ */
+function pickMcp(result: unknown): { calls: number; toolNames: string[] } {
+  try {
+    const steps = (
+      result as { steps?: Array<{ toolCalls?: Array<{ toolName?: string }> }> }
+    )?.steps;
+    if (!Array.isArray(steps)) return { calls: 0, toolNames: [] };
+    const names: string[] = [];
+    for (const step of steps) {
+      for (const call of step.toolCalls ?? []) {
+        if (call?.toolName) names.push(call.toolName);
+      }
+    }
+    return { calls: names.length, toolNames: names };
+  } catch {
+    return { calls: 0, toolNames: [] };
+  }
 }
 
 function pickUsage(
@@ -451,7 +482,11 @@ export async function mapAndValidateCode(input: {
         },
       });
 
-      let result: { text: string; usage: ReturnType<typeof pickUsage> };
+      let result: {
+        text: string;
+        usage: ReturnType<typeof pickUsage>;
+        mcp: { calls: number; toolNames: string[] };
+      };
       try {
         result = await runAgentAttempt({ modelId, system, userMessage, tools });
       } catch (e) {
@@ -517,6 +552,8 @@ export async function mapAndValidateCode(input: {
             ...result.usage,
             costUsd: estimateCostUsd(lastModel, result.usage),
             attempts,
+            mcpToolCalls: result.mcp.calls,
+            mcpToolNames: result.mcp.toolNames,
           },
         });
         return {
@@ -544,6 +581,8 @@ export async function mapAndValidateCode(input: {
             ...result.usage,
             costUsd: estimateCostUsd(lastModel, result.usage),
             attempts,
+            mcpToolCalls: result.mcp.calls,
+            mcpToolNames: result.mcp.toolNames,
           },
         });
         return {

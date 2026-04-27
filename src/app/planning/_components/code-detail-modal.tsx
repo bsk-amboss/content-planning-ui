@@ -3,6 +3,7 @@
 import { Badge, Inline, Modal, Stack, Tabs, Text } from '@amboss/design-system';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import type { CodeRunMetadata } from '@/lib/data/code-run-metadata';
 import type { Code } from '@/lib/repositories/types';
 import { CoverageBadge, DepthBadge } from './suggestion-badge';
 
@@ -56,7 +57,8 @@ export type DetailTarget =
   | 'coverage-notes'
   | 'suggestion-improvements'
   | 'suggestion-updates'
-  | 'suggestion-new-articles';
+  | 'suggestion-new-articles'
+  | 'metadata';
 
 const TAB_ORDER: DetailTarget[] = [
   'coverage-articles',
@@ -64,6 +66,7 @@ const TAB_ORDER: DetailTarget[] = [
   'suggestion-improvements',
   'suggestion-updates',
   'suggestion-new-articles',
+  'metadata',
 ];
 
 function targetToIndex(target: DetailTarget | undefined): number {
@@ -93,6 +96,11 @@ export function CodeDetailModal({
   const [activeTab, setActiveTab] = useState(targetToIndex(target));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [metadata, setMetadata] = useState<CodeRunMetadata | null>(null);
+  const [metadataState, setMetadataState] = useState<
+    'idle' | 'loading' | 'loaded' | 'missing' | 'error'
+  >('idle');
+  const [metadataError, setMetadataError] = useState<string | null>(null);
 
   // The modal stays mounted across opens (row toggles between null and a
   // value), so re-align the tab whenever the caller's target/row changes.
@@ -105,7 +113,51 @@ export function CodeDetailModal({
     setActiveTab(targetToIndex(target));
     setError(null);
     setSubmitting(false);
+    setMetadata(null);
+    setMetadataState('idle');
+    setMetadataError(null);
   }, [target, rowKey]);
+
+  // Lazy-load metadata only when the user opens that tab. We deliberately
+  // exclude `metadataState` from the deps: setting it to 'loading' inside the
+  // effect would otherwise re-trigger the effect, and the previous run's
+  // cleanup would flip `cancelled = true` on the in-flight fetch — leaving
+  // state stuck at 'loading'. Re-runs on row/tab change cancel cleanly.
+  useEffect(() => {
+    if (activeTab !== 5 || !rowKey) return;
+    let cancelled = false;
+    setMetadataState('loading');
+    setMetadataError(null);
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/codes/${encodeURIComponent(specialtySlug)}/${encodeURIComponent(rowKey)}/run-metadata`,
+        );
+        if (cancelled) return;
+        if (res.status === 404) {
+          setMetadataState('missing');
+          return;
+        }
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          setMetadataError(body?.error ?? `HTTP ${res.status}`);
+          setMetadataState('error');
+          return;
+        }
+        const json = (await res.json()) as CodeRunMetadata;
+        if (cancelled) return;
+        setMetadata(json);
+        setMetadataState('loaded');
+      } catch (e) {
+        if (cancelled) return;
+        setMetadataError(e instanceof Error ? e.message : String(e));
+        setMetadataState('error');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, rowKey, specialtySlug]);
 
   if (!row) return null;
 
@@ -244,6 +296,7 @@ export function CodeDetailModal({
               { label: 'Improvements' },
               { label: 'Article Updates' },
               { label: 'New Articles' },
+              { label: 'Metadata' },
             ]}
           >
             <div>
@@ -255,8 +308,14 @@ export function CodeDetailModal({
                 <SuggestionImprovementsPanel improvements={row.improvements ?? null} />
               ) : activeTab === 3 ? (
                 <SuggestionUpdatesPanel updates={updates} />
-              ) : (
+              ) : activeTab === 4 ? (
                 <SuggestionNewArticlesPanel newArticles={newArticles} />
+              ) : (
+                <MetadataPanel
+                  state={metadataState}
+                  error={metadataError}
+                  metadata={metadata}
+                />
               )}
             </div>
           </Tabs>
@@ -443,4 +502,195 @@ function SuggestionImprovementsPanel({ improvements }: { improvements: string | 
     );
   }
   return <Text>{improvements}</Text>;
+}
+
+function formatUsd(n: number | null): string {
+  if (n === null) return '—';
+  if (n === 0) return '$0';
+  if (n < 0.01) return `$${n.toFixed(4)}`;
+  return `$${n.toFixed(3)}`;
+}
+
+function formatDuration(ms: number | null): string {
+  if (ms === null || ms === 0) return '—';
+  if (ms < 1000) return `${ms} ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  const rem = Math.round(s % 60);
+  return `${m}m ${rem}s`;
+}
+
+function formatTokens(n: number): string {
+  if (n === 0) return '—';
+  return n.toLocaleString();
+}
+
+function MetadataPanel({
+  state,
+  error,
+  metadata,
+}: {
+  state: 'idle' | 'loading' | 'loaded' | 'missing' | 'error';
+  error: string | null;
+  metadata: CodeRunMetadata | null;
+}) {
+  if (state === 'loading' || state === 'idle') {
+    return (
+      <Text size="s" color="tertiary">
+        Loading run metadata…
+      </Text>
+    );
+  }
+  if (state === 'missing') {
+    return (
+      <Text size="s" color="tertiary">
+        No mapping run has been recorded for this code yet.
+      </Text>
+    );
+  }
+  if (state === 'error' || !metadata) {
+    return (
+      <Text size="s" color="error">
+        {error ?? 'Failed to load metadata.'}
+      </Text>
+    );
+  }
+
+  const { totals, attempts, toolBreakdown, finalModel, runStartedAt, stageStatus } =
+    metadata;
+
+  return (
+    <Stack space="m">
+      <Stack space="xxs">
+        <Text size="xs" weight="bold" color="secondary" transform="uppercase">
+          Run summary
+        </Text>
+        <Inline space="xs" vAlignItems="center">
+          <Badge text={stageStatus ?? 'unknown'} color="gray" />
+          {finalModel ? <Badge text={finalModel} color="blue" /> : null}
+          <Text size="s" color="tertiary">
+            Started {new Date(runStartedAt).toLocaleString()}
+          </Text>
+        </Inline>
+      </Stack>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+          gap: 12,
+        }}
+      >
+        <MetricCell label="Total cost" value={formatUsd(totals.costUsd)} />
+        <MetricCell label="Wall time" value={formatDuration(totals.durationMs)} />
+        <MetricCell label="MCP calls" value={String(totals.mcpToolCalls)} />
+        <MetricCell label="Input tokens" value={formatTokens(totals.inputTokens)} />
+        <MetricCell label="Output tokens" value={formatTokens(totals.outputTokens)} />
+        <MetricCell
+          label="Reasoning tokens"
+          value={formatTokens(totals.reasoningTokens)}
+        />
+      </div>
+
+      {toolBreakdown.length > 0 ? (
+        <Stack space="xxs">
+          <Text size="xs" weight="bold" color="secondary" transform="uppercase">
+            MCP tool breakdown
+          </Text>
+          <Inline space="xs" vAlignItems="center">
+            {toolBreakdown.map((t) => (
+              <Badge key={t.name} text={`${t.name} ×${t.count}`} color="purple" />
+            ))}
+          </Inline>
+        </Stack>
+      ) : null}
+
+      <Stack space="xxs">
+        <Text size="xs" weight="bold" color="secondary" transform="uppercase">
+          Attempts ({attempts.length})
+        </Text>
+        {attempts.length === 0 ? (
+          <Text size="s" color="tertiary">
+            No attempt events recorded.
+          </Text>
+        ) : (
+          <Stack space="xs">
+            {attempts.map((a, i) => (
+              <div
+                // biome-ignore lint/suspicious/noArrayIndexKey: events have no stable id and createdAt may collide for fast attempts
+                key={`${a.createdAt}-${i}`}
+                style={{
+                  borderLeft: `2px solid ${
+                    a.level === 'error'
+                      ? 'rgb(220, 38, 38)'
+                      : a.level === 'warn'
+                        ? 'rgb(217, 119, 6)'
+                        : 'var(--ads-c-divider, rgba(0,0,0,0.15))'
+                  }`,
+                  paddingLeft: 10,
+                }}
+              >
+                <Inline space="xs" vAlignItems="center">
+                  <Text size="s" weight="bold">
+                    {a.message}
+                  </Text>
+                  {a.model ? (
+                    <Text size="xs" color="tertiary">
+                      {a.model}
+                    </Text>
+                  ) : null}
+                </Inline>
+                <Inline space="s" vAlignItems="center">
+                  {typeof a.costUsd === 'number' ? (
+                    <Text size="xs" color="secondary">
+                      {formatUsd(a.costUsd)}
+                    </Text>
+                  ) : null}
+                  {a.durationMs ? (
+                    <Text size="xs" color="secondary">
+                      {formatDuration(a.durationMs)}
+                    </Text>
+                  ) : null}
+                  {typeof a.mcpToolCalls === 'number' && a.mcpToolCalls > 0 ? (
+                    <Text size="xs" color="secondary">
+                      {a.mcpToolCalls} MCP calls
+                    </Text>
+                  ) : null}
+                  {a.inputTokens || a.outputTokens ? (
+                    <Text size="xs" color="tertiary">
+                      {formatTokens(a.inputTokens ?? 0)} in /{' '}
+                      {formatTokens(a.outputTokens ?? 0)} out
+                    </Text>
+                  ) : null}
+                  {a.invalidIds && a.invalidIds.length > 0 ? (
+                    <Badge text={`${a.invalidIds.length} invalid IDs`} color="yellow" />
+                  ) : null}
+                </Inline>
+              </div>
+            ))}
+          </Stack>
+        )}
+      </Stack>
+    </Stack>
+  );
+}
+
+function MetricCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        border: '1px solid var(--ads-c-divider, rgba(0,0,0,0.1))',
+        borderRadius: 6,
+        padding: '8px 10px',
+      }}
+    >
+      <Text size="xs" color="tertiary">
+        {label}
+      </Text>
+      <Text size="m" weight="bold">
+        {value}
+      </Text>
+    </div>
+  );
 }

@@ -268,6 +268,7 @@ export function CodesView({
         label: 'Articles',
         width: 180,
         render: (r) => {
+          if (inFlightSet.has(r.code)) return <MappingPulse />;
           const arr = r.articlesWhereCoverageIs ?? [];
           const articles = arr.length;
           const sections = countCoveredSections(arr);
@@ -294,6 +295,7 @@ export function CodesView({
         label: 'Updates',
         width: 130,
         render: (r) => {
+          if (inFlightSet.has(r.code)) return <MappingPulse />;
           const n = r.existingArticleUpdates?.length ?? 0;
           if (n === 0) return <EmptyChip />;
           return (
@@ -314,6 +316,7 @@ export function CodesView({
         label: 'New articles',
         width: 130,
         render: (r) => {
+          if (inFlightSet.has(r.code)) return <MappingPulse />;
           const n = r.newArticlesNeeded?.length ?? 0;
           if (n === 0) return <EmptyChip />;
           return (
@@ -485,7 +488,7 @@ function MappingPulse() {
           gap: 6,
           fontSize: 12,
           fontWeight: 600,
-          color: 'rgb(30, 64, 175)',
+          color: 'rgb(161, 98, 7)',
         }}
       >
         <span
@@ -494,7 +497,7 @@ function MappingPulse() {
             width: 8,
             height: 8,
             borderRadius: 999,
-            background: 'rgb(59, 130, 246)',
+            background: 'rgb(234, 179, 8)',
             animation: 'codes-mapping-pulse 1.2s ease-in-out infinite',
           }}
         />

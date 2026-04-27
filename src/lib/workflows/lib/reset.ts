@@ -6,7 +6,7 @@
  * /api/workflows/reset-stage route.
  */
 
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, notInArray, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import {
   articleUpdateSuggestions,
@@ -136,6 +136,12 @@ export async function resetStageCascade(input: {
       })
       .where(and(eq(pipelineStages.runId, input.runId), eq(pipelineStages.stage, s)));
   }
+  // Cancel every non-terminal pipeline run for this specialty — not just the
+  // stage's owning run. Per-code remap-code calls and partial map_codes runs
+  // each get their own pipeline_runs row; if one of them crashed mid-flight
+  // it keeps `status='running'`, and getCurrentPipelineRun will keep telling
+  // the dashboard a run is active. Resetting any stage is the user signalling
+  // "clear the slate," so it should sweep these zombies too.
   await db
     .update(pipelineRuns)
     .set({
@@ -143,6 +149,39 @@ export async function resetStageCascade(input: {
       finishedAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(eq(pipelineRuns.id, input.runId));
+    .where(
+      and(
+        eq(pipelineRuns.specialtySlug, input.specialtySlug),
+        notInArray(pipelineRuns.status, ['completed', 'failed', 'cancelled']),
+      ),
+    );
   return toReset;
+}
+
+/**
+ * Cancel every non-terminal pipeline run for a specialty without touching
+ * stage data, mappings, or extracted codes. Use this when the dashboard is
+ * stuck in "Run in progress" because of a zombie run (e.g. crashed
+ * remap-code) but the user wants to keep the data they have and start a new
+ * run on top of it. Returns the count of runs cancelled.
+ */
+export async function clearStaleRunsForSpecialty(
+  specialtySlug: string,
+): Promise<number> {
+  const db = getDb();
+  const result = await db
+    .update(pipelineRuns)
+    .set({
+      status: 'cancelled',
+      finishedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(pipelineRuns.specialtySlug, specialtySlug),
+        notInArray(pipelineRuns.status, ['completed', 'failed', 'cancelled']),
+      ),
+    )
+    .returning({ id: pipelineRuns.id });
+  return result.length;
 }

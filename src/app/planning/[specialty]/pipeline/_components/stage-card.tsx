@@ -246,6 +246,9 @@ export function StageCard({
   runUrls,
   events,
   sources,
+  treatAsInProgress,
+  alwaysShowReset,
+  continueAction,
 }: {
   title: string;
   description?: string;
@@ -255,6 +258,23 @@ export function StageCard({
   runUrls?: unknown;
   events?: PipelineEventRow[];
   sources?: CodeSource[];
+  /** When the latest run wrapped up (completed / approved) but the
+   *  specialty-level work isn't finished — e.g. map_codes ran for a subset
+   *  of codes and more remain unmapped — display "In progress" instead of
+   *  "Completed". Other statuses (running / awaiting_approval / failed /
+   *  pending) are left alone so they remain actionable signals. */
+  treatAsInProgress?: boolean;
+  /** Render the Reset button whenever `stage` exists, not just on terminal
+   *  states. Used by map_codes so users can wipe state at any point in the
+   *  partial-run flow. */
+  alwaysShowReset?: boolean;
+  /** Opt-in primary CTA for partially-complete stages. Renders an AMBOSS-
+   *  green Button with the given label when the latest run is wrapped up
+   *  (completed / approved / failed / cancelled) so the user can launch
+   *  another pass without scrolling. The handler is fire-and-forget — the
+   *  caller is responsible for clearing zombie pipeline runs and revealing
+   *  whatever follow-up form is needed. */
+  continueAction?: { label: string; onClick: () => void | Promise<void> };
 }) {
   const runInputs = normalizeInputs(runUrls);
   const status = (stage?.status ?? 'pending') as StageStatus;
@@ -267,6 +287,16 @@ export function StageCard({
   const isTerminal =
     status === 'completed' || status === 'failed' || status === 'skipped';
   const isCancellable = status === 'running' || status === 'awaiting_approval';
+  const inProgressOverride =
+    treatAsInProgress === true && (status === 'completed' || status === 'approved');
+  const badgeLabel = inProgressOverride ? 'In progress' : STATUS_LABEL[status];
+  const badgeColor = inProgressOverride ? 'blue' : STATUS_COLOR[status];
+  const showReset = stage !== null && (isTerminal || alwaysShowReset === true);
+  // Continue is only useful when nothing is mid-flight. While running or
+  // awaiting_approval the user should drive the run via Cancel / Approve.
+  const showContinue =
+    continueAction !== undefined && status !== 'running' && status !== 'awaiting_approval';
+  const [continuing, setContinuing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const evs = events ?? [];
   const hasDetails =
@@ -283,7 +313,7 @@ export function StageCard({
       <Card title={title} titleAs="h4" outlined>
         <CardBox>
           <Stack space="s">
-            <Badge text={STATUS_LABEL[status]} color={STATUS_COLOR[status]} />
+            <Badge text={badgeLabel} color={badgeColor} />
             {description ? <Text color="secondary">{description}</Text> : null}
             {summary ? <Text>{summary}</Text> : null}
             {metrics ? <Text color="secondary">{metrics}</Text> : null}
@@ -312,12 +342,28 @@ export function StageCard({
                   stage={stageName}
                 />
               ) : null}
-              {isTerminal && stage ? (
+              {showReset && stage ? (
                 <ResetButton
                   runId={stage.runId}
                   specialtySlug={specialtySlug}
                   stage={stageName}
                 />
+              ) : null}
+              {showContinue && continueAction ? (
+                <Button
+                  variant="primary"
+                  disabled={continuing}
+                  onClick={async () => {
+                    setContinuing(true);
+                    try {
+                      await continueAction.onClick();
+                    } finally {
+                      setContinuing(false);
+                    }
+                  }}
+                >
+                  {continuing ? 'Working…' : continueAction.label}
+                </Button>
               ) : null}
             </Inline>
             {expanded && stage ? (

@@ -41,6 +41,11 @@ export type EventMetrics = {
   code?: string;
   attempts?: number;
   invalidIds?: string[];
+  /** Number of MCP tool calls the model made during this attempt (across all
+   *  reasoning steps). `mcpToolNames` is the per-call list of names so the UI
+   *  can roll up to e.g. "search_article_sections ×3, get_sections ×8". */
+  mcpToolCalls?: number;
+  mcpToolNames?: string[];
 };
 
 export async function logEvent(input: {

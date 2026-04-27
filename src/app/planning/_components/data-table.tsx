@@ -69,21 +69,24 @@ const GROUP_STYLES: Record<
 > = {
   metadata: {
     label: 'Metadata',
-    bg: 'rgba(15, 23, 42, 0.06)',
+    // `bg` colors are pre-blended over white (the page background) so the
+    // sticky group banner stays opaque when rows scroll under it. `stripe`
+    // stays translucent — it sits on already-opaque body cells.
+    bg: 'rgb(241, 241, 242)',
     fg: 'rgba(15, 23, 42, 0.65)',
     border: 'rgba(15, 23, 42, 0.25)',
     stripe: 'rgba(15, 23, 42, 0.035)',
   },
   coverage: {
     label: 'Coverage',
-    bg: 'rgba(34, 139, 80, 0.12)',
+    bg: 'rgb(228, 241, 234)',
     fg: 'rgb(15, 95, 50)',
     border: 'rgb(34, 139, 80)',
     stripe: 'rgba(34, 139, 80, 0.06)',
   },
   suggestions: {
     label: 'Suggestions',
-    bg: 'rgba(217, 119, 6, 0.14)',
+    bg: 'rgb(250, 236, 220)',
     fg: 'rgb(133, 77, 14)',
     border: 'rgb(217, 119, 6)',
     stripe: 'rgba(217, 119, 6, 0.07)',
@@ -105,6 +108,15 @@ type NumericFilter = { op: NumOp; value: number };
 const VIRTUALIZE_THRESHOLD = 200;
 
 const MIN_COLUMN_WIDTH = 50;
+
+/** Sticky `top` (px) for the column-header row when group banners are
+ *  present. Deliberately a few px LESS than the banner's intrinsic height
+ *  (~26-28 depending on browser font metrics) so the column-header row
+ *  overlaps the banner's bottom edge. Banner has z-index 2 and covers the
+ *  overlap zone, so the eye sees them flush — no gap, regardless of how
+ *  the browser sizes the banner. The overlapped pixels of the column
+ *  header are inside its 10px top padding, not its content. */
+const COLUMN_HEADER_STICKY_TOP_GROUPED = 22;
 
 export function DataTable<T>({
   rows,
@@ -497,15 +509,17 @@ function HeaderCell<T>({
         fontWeight: 600,
         whiteSpace: 'nowrap',
         width,
-        background: 'var(--ads-c-surface-subtle, rgba(0,0,0,0.02))',
+        // Opaque so rows don't bleed through when the header is sticky.
+        // Approx. equivalent of the prior `rgba(0,0,0,0.02)` over white.
+        background: 'rgb(250, 250, 250)',
         position: 'sticky',
-        // Stack below the group banner row (which uses `top: 0`) when groups
-        // are present, so both rows stay sticky together while scrolling.
-        // Kept at z=1 so DS Combobox/Select dropdowns (portaled to body with
-        // their default z-index of 1) aren't visually obscured — the
-        // HeaderMenu portals to body separately with a higher z-index so it
-        // still appears above the banner.
-        top: grouped ? 26 : 0,
+        // Sits a few px BEHIND the banner row's bottom edge, deliberately
+        // overlapping so no body rows peek through between them. The banner
+        // (z-index 2) covers the overlap zone. Kept at z=1 so DS
+        // Combobox/Select dropdowns (portaled to body with their default
+        // z-index of 1) aren't visually obscured — the HeaderMenu portals
+        // separately with a higher z-index so it still appears above.
+        top: grouped ? COLUMN_HEADER_STICKY_TOP_GROUPED : 0,
         zIndex: 1,
       }}
     >
@@ -1469,9 +1483,15 @@ function PlainBody<T>(props: BodyProps<T>) {
   return (
     <div
       style={{
-        overflowX: 'auto',
+        // Both axes scroll inside the wrapper; combined with `position: sticky`
+        // below this anchors the table region right under the 104px fixed nav,
+        // so the sticky <th> inside ends up pinned to the top of the window.
+        overflow: 'auto',
+        maxHeight: 'calc(100vh - 120px)',
         border: '1px solid var(--ads-c-divider, rgba(0,0,0,0.1))',
         borderRadius: 6,
+        position: 'sticky',
+        top: 104,
       }}
     >
       <table
@@ -1531,11 +1551,13 @@ function VirtualizedBody<T>(props: BodyProps<T>) {
     <div
       ref={parentRef}
       style={{
-        maxHeight: '70vh',
+        maxHeight: 'calc(100vh - 120px)',
         overflow: 'auto',
         border: '1px solid var(--ads-c-divider, rgba(0,0,0,0.1))',
         borderRadius: 6,
         contain: 'strict',
+        position: 'sticky',
+        top: 104,
       }}
     >
       <table

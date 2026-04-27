@@ -75,6 +75,28 @@ export function PipelineDashboard({
     return () => clearInterval(id);
   }, [runActive, router]);
 
+  // "Continue mapping" CTA on the Map codes card: cancel any zombie runs
+  // (so getCurrentPipelineRun stops insisting a run is active), reveal the
+  // existing Next-step start form, and scroll the form into view. The form
+  // lives in the Next step section above; this handler does not duplicate it.
+  const onContinueMapping = async () => {
+    try {
+      await fetch('/api/workflows/clear-stale-runs', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ specialtySlug }),
+      });
+    } catch {
+      // Surfaced indirectly: if cancellation fails the next-step section
+      // will still show "Run in progress" after refresh, prompting another try.
+    }
+    setShowMapForm(true);
+    router.refresh();
+    requestAnimationFrame(() => {
+      document.getElementById('next-step')?.scrollIntoView({ behavior: 'smooth' });
+    });
+  };
+
   return (
     <Stack space="l">
       {runActive ? (
@@ -87,6 +109,7 @@ export function PipelineDashboard({
       ) : null}
       {run?.error ? <Callout type="error" text={run.error} /> : null}
 
+      <div id="next-step" />
       <Stack space="s">
         <H2>Next step</H2>
         {(() => {
@@ -110,6 +133,8 @@ export function PipelineDashboard({
                 specialtySlug={specialtySlug}
                 stageName="map_codes"
                 events={stages.map_codes.events}
+                alwaysShowReset
+                treatAsInProgress={hasUnmappedCodes}
               />
             );
           }
@@ -319,6 +344,13 @@ export function PipelineDashboard({
           specialtySlug={specialtySlug}
           stageName="map_codes"
           events={stages.map_codes?.events ?? []}
+          treatAsInProgress={hasUnmappedCodes}
+          alwaysShowReset
+          continueAction={
+            hasUnmappedCodes
+              ? { label: 'Continue mapping', onClick: onContinueMapping }
+              : undefined
+          }
         />
       </PhaseGroup>
 
