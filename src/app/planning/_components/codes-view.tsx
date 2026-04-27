@@ -128,9 +128,12 @@ export function CodesView({
       {
         key: 'code',
         label: 'Code',
+        // Plain text — no <code> wrapper, which used to introduce UA-default
+        // monospace styling that made this column read differently from its
+        // metadata neighbors even after fontFamily overrides.
         render: (r) => (
           <ClickableCell onClick={() => openMeta(r)} title="Open code details">
-            <code>{r.code}</code>
+            {r.code}
           </ClickableCell>
         ),
         width: 180,
@@ -153,6 +156,11 @@ export function CodesView({
         ),
         accessor: (r) => r.description ?? null,
         type: 'string',
+        // Free-form text — a checkbox list of unique descriptions would be
+        // useless across thousands of rows. Use the substring-contains
+        // filter instead.
+        filterable: true,
+        filterMode: 'contains',
         group: 'metadata',
       },
       {
@@ -349,7 +357,6 @@ export function CodesView({
         columns={columns}
         getRowKey={(r, i) => `${r.code}-${i}`}
         emptyText="No codes match the current filters."
-        leadingNote={`${codes.length.toLocaleString()} rows`}
         storageKey={`codes-table:${specialtySlug}`}
       />
       <CodeDetailModal
@@ -443,16 +450,19 @@ function ChipButton({
         border: `1px solid ${c.border}`,
         borderRadius: 999,
         padding: '2px 10px',
-        fontSize: 12,
-        fontWeight: 600,
-        font: 'inherit',
+        // Match the DS Tabs nav font (14 Lato, normal weight). Overriding
+        // the button UA defaults explicitly so the chip text doesn't shrink
+        // to the browser's smaller form-control font.
+        fontFamily: 'inherit',
+        fontSize: 14,
+        fontWeight: 400,
         cursor: 'pointer',
         lineHeight: 1.4,
         whiteSpace: 'nowrap',
       }}
     >
       <span>{label}</span>
-      <span aria-hidden style={{ fontSize: 11, opacity: 0.8 }}>
+      <span aria-hidden style={{ fontSize: 14, opacity: 0.8 }}>
         ›
       </span>
     </button>
@@ -464,7 +474,7 @@ function EmptyChip() {
     <span
       style={{
         color: 'var(--ads-c-text-tertiary, rgba(0,0,0,0.35))',
-        fontSize: 12,
+        fontSize: 14,
       }}
     >
       —
@@ -486,8 +496,8 @@ function MappingPulse() {
           display: 'inline-flex',
           alignItems: 'center',
           gap: 6,
-          fontSize: 12,
-          fontWeight: 600,
+          fontSize: 14,
+          fontWeight: 400,
           color: 'rgb(161, 98, 7)',
         }}
       >

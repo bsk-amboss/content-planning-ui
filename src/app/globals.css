@@ -10,6 +10,13 @@ body {
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Match the AMBOSS DS, which uses Lato (loaded via the <link> in
+     RootLayout). Setting it on body lets raw HTML elements — table chrome,
+     form controls, plain text — inherit the same family as DS components.
+     Without this, <input>/<select>/<table> fall back to the browser default
+     and visibly differ from DS Text/Button. */
+  font-family:
+    "Lato", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
 }
 
 .primary-nav-content {
@@ -91,4 +98,34 @@ body {
 .filter-cell--wide > * {
   width: 100%;
   min-width: 0;
+}
+
+/* DataTable typography reset.
+   Wraps every shared DataTable instance (codes, sections, sources,
+   articles, categories, …). Inline-style font properties on raw <th>,
+   <td>, <button>, <input>, etc. don't reliably win against DS components'
+   emotion-injected styles or browser UA defaults for form controls — we
+   were ending up with a mix of system fonts in the table chrome. The
+   single rule below force-applies one consistent typeface to every
+   descendant of `.ds-data-table`, then sets a single base size/weight on
+   the table itself so cells, headers, and the group banners all read at
+   the same rhythm as the DS Tabs nav (Lato, 14px) — minus the bold. */
+.ds-data-table,
+.ds-data-table * {
+  font-family:
+    "Lato", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif !important;
+}
+
+.ds-data-table table,
+.ds-data-table table th,
+.ds-data-table table td,
+.ds-data-table table button,
+.ds-data-table table input,
+.ds-data-table table select,
+.ds-data-table table textarea,
+.ds-data-table table code,
+.ds-data-table table span {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.4;
 }

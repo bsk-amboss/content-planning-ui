@@ -50,6 +50,12 @@ export interface Column<T> {
    *  unique non-empty values returned by `filterValue` (or `accessor`) are
    *  used and labelled with their raw value. */
   filterOptions?: Array<{ value: string; label: string }>;
+  /** Filter UI mode for non-numeric columns. Defaults to `'select'`
+   *  (multi-select dropdown of options). Use `'contains'` for free-form
+   *  text columns where a checkbox list of unique values is impractical —
+   *  it shows a text input that does case-insensitive substring matching
+   *  against `filterValue` (or `accessor` stringified). */
+  filterMode?: 'select' | 'contains';
   editable?: EditableConfig<T>;
   group?: ColumnGroup;
 }
@@ -105,18 +111,23 @@ type SortState = { key: string; dir: 'asc' | 'desc' } | null;
 type NumOp = '>' | '>=' | '<' | '<=' | '=' | '!=';
 type NumericFilter = { op: NumOp; value: number };
 
-const VIRTUALIZE_THRESHOLD = 200;
+// Switch to virtualized rendering early. Virtualization renders only the rows
+// in (and slightly around) the visible viewport, so initial paint cost stays
+// roughly constant regardless of total row count. Below this threshold the
+// plain (non-virtualized) body is fine and avoids the fixed-height container
+// that virtualization needs.
+const VIRTUALIZE_THRESHOLD = 30;
 
 const MIN_COLUMN_WIDTH = 50;
 
 /** Sticky `top` (px) for the column-header row when group banners are
  *  present. Deliberately a few px LESS than the banner's intrinsic height
- *  (~26-28 depending on browser font metrics) so the column-header row
- *  overlaps the banner's bottom edge. Banner has z-index 2 and covers the
- *  overlap zone, so the eye sees them flush — no gap, regardless of how
- *  the browser sizes the banner. The overlapped pixels of the column
- *  header are inside its 10px top padding, not its content. */
-const COLUMN_HEADER_STICKY_TOP_GROUPED = 22;
+ *  (~32px at 14px Lato + 6/12 padding + ~1.4 line-height) so the
+ *  column-header row overlaps the banner's bottom edge. Banner has z-index
+ *  2 and covers the overlap zone, so the eye sees them flush — no gap,
+ *  regardless of how the browser sizes the banner. The overlapped pixels
+ *  of the column header are inside its 10px top padding, not its content. */
+const COLUMN_HEADER_STICKY_TOP_GROUPED = 28;
 
 export function DataTable<T>({
   rows,
@@ -144,10 +155,15 @@ export function DataTable<T>({
 }) {
   const [sort, setSort] = useState<SortState>(null);
   const [numFilters, setNumFilters] = useState<Record<string, NumericFilter | null>>({});
-  // String/categorical filters keyed by column. A value of `null` (or absent
-  // entry) means no filter; a string means "rows whose `filterValue` (or
-  // accessor) equals this".
-  const [stringFilters, setStringFilters] = useState<Record<string, string | null>>({});
+  // String/categorical filters keyed by column. `null` (or absent entry) /
+  // empty array means no filter; a non-empty array means "rows whose
+  // `filterValue` (or accessor) matches *any* of these" (multi-select OR).
+  const [stringFilters, setStringFilters] = useState<Record<string, string[] | null>>({});
+  // Free-form text filters for columns with `filterMode: 'contains'`. Stores
+  // the raw query per column; matching is case-insensitive substring. Kept
+  // in a separate map from `stringFilters` so the two UIs (multi-select vs
+  // text input) don't share state and can't confuse each other.
+  const [textFilters, setTextFilters] = useState<Record<string, string | null>>({});
   // Per-column width overrides, applied via `<colgroup>` so both header and
   // body cells resize together. Keyed by column.key and populated by dragging
   // the handle in each HeaderCell.
@@ -187,14 +203,26 @@ export function DataTable<T>({
           v?: number;
           sort?: SortState;
           numFilters?: Record<string, NumericFilter | null>;
-          stringFilters?: Record<string, string | null>;
+          // Persisted format historically stored a single string per column
+          // (pre-multi-select). Accept either shape and normalize on load.
+          stringFilters?: Record<string, string | string[] | null>;
+          textFilters?: Record<string, string | null>;
           hidden?: string[];
           widths?: Record<string, number>;
         };
         if (parsed.v === 1) {
           if (parsed.sort !== undefined) setSort(parsed.sort);
           if (parsed.numFilters) setNumFilters(parsed.numFilters);
-          if (parsed.stringFilters) setStringFilters(parsed.stringFilters);
+          if (parsed.stringFilters) {
+            const normalized: Record<string, string[] | null> = {};
+            for (const [k, v] of Object.entries(parsed.stringFilters)) {
+              if (v === null || v === undefined || v === '') normalized[k] = null;
+              else if (Array.isArray(v)) normalized[k] = v.length > 0 ? v : null;
+              else normalized[k] = [v];
+            }
+            setStringFilters(normalized);
+          }
+          if (parsed.textFilters) setTextFilters(parsed.textFilters);
           if (Array.isArray(parsed.hidden)) setHidden(new Set(parsed.hidden));
           if (parsed.widths) setWidths(parsed.widths);
         }
@@ -215,6 +243,7 @@ export function DataTable<T>({
           sort,
           numFilters,
           stringFilters,
+          textFilters,
           hidden: [...hidden],
           widths,
         }),
@@ -223,24 +252,36 @@ export function DataTable<T>({
       // QuotaExceeded or storage disabled — non-fatal; user just loses
       // persistence for this session.
     }
-  }, [storageKey, sort, numFilters, stringFilters, hidden, widths]);
+  }, [storageKey, sort, numFilters, stringFilters, textFilters, hidden, widths]);
 
   const filteredRows = useMemo(() => {
     const numEntries = Object.entries(numFilters).filter(
       ([, f]) => f !== null && !Number.isNaN(f.value),
     ) as Array<[string, NumericFilter]>;
     const strEntries = Object.entries(stringFilters).filter(
-      ([, v]) => v !== null && v !== '',
+      ([, v]) => Array.isArray(v) && v.length > 0,
+    ) as Array<[string, string[]]>;
+    const txtEntries = Object.entries(textFilters).filter(
+      ([, v]) => typeof v === 'string' && v.trim() !== '',
     ) as Array<[string, string]>;
-    if (numEntries.length === 0 && strEntries.length === 0) return rows;
+    if (numEntries.length === 0 && strEntries.length === 0 && txtEntries.length === 0)
+      return rows;
     const numBindings = numEntries.map(([key, filter]) => ({
       key,
       filter,
       col: columns.find((c) => c.key === key),
     }));
-    const strBindings = strEntries.map(([key, value]) => ({
+    const strBindings = strEntries.map(([key, values]) => ({
       key,
-      value,
+      // Set lookup so per-row matching is O(1) regardless of selection size.
+      values: new Set(values),
+      col: columns.find((c) => c.key === key),
+    }));
+    const txtBindings = txtEntries.map(([key, value]) => ({
+      key,
+      // Lowercase once outside the row loop — the per-row compare reuses
+      // this needle against each lowercased candidate.
+      needle: value.trim().toLowerCase(),
       col: columns.find((c) => c.key === key),
     }));
     return rows.filter((row) => {
@@ -252,18 +293,28 @@ export function DataTable<T>({
         if (Number.isNaN(n)) return false;
         if (!compareNum(n, filter.op, filter.value)) return false;
       }
-      for (const { value, col } of strBindings) {
+      for (const { values, col } of strBindings) {
         if (!col) continue;
         const raw = col.filterValue
           ? col.filterValue(row)
           : col.accessor
             ? stringifyValue(col.accessor(row))
             : undefined;
-        if (raw !== value) return false;
+        if (raw === undefined || !values.has(raw)) return false;
+      }
+      for (const { needle, col } of txtBindings) {
+        if (!col) continue;
+        const raw = col.filterValue
+          ? col.filterValue(row)
+          : col.accessor
+            ? stringifyValue(col.accessor(row))
+            : undefined;
+        if (raw === undefined) return false;
+        if (!raw.toLowerCase().includes(needle)) return false;
       }
       return true;
     });
-  }, [rows, columns, numFilters, stringFilters]);
+  }, [rows, columns, numFilters, stringFilters, textFilters]);
 
   // Unique non-empty filter values per column, computed once from the full
   // (un-filtered) row set so the dropdowns don't shrink as filters are
@@ -289,15 +340,31 @@ export function DataTable<T>({
 
   const hasActiveFilter =
     Object.values(numFilters).some((f) => f !== null && !Number.isNaN(f.value)) ||
-    Object.values(stringFilters).some((v) => v !== null && v !== '');
+    Object.values(stringFilters).some((v) => Array.isArray(v) && v.length > 0) ||
+    Object.values(textFilters).some((v) => typeof v === 'string' && v.trim() !== '');
 
   const clearFilters = () => {
     setNumFilters({});
     setStringFilters({});
+    setTextFilters({});
   };
 
-  const setStringFilter = (key: string, value: string | null) =>
-    setStringFilters((prev) => ({ ...prev, [key]: value }));
+  const setTextFilter = (key: string, value: string | null) =>
+    setTextFilters((prev) => ({
+      ...prev,
+      // Empty / whitespace-only collapses to null so the active-filter
+      // checks above match the no-filter representation everywhere.
+      [key]: value && value.trim() !== '' ? value : null,
+    }));
+
+  const setStringFilter = (key: string, values: string[] | null) =>
+    setStringFilters((prev) => ({
+      ...prev,
+      // Normalize empty array → null so persistence stays compact and the
+      // hasActiveFilter / filter loop checks above can rely on a single
+      // "no filter" representation.
+      [key]: values && values.length > 0 ? values : null,
+    }));
 
   const sortedRows = useMemo(() => {
     if (!sort) return filteredRows;
@@ -331,7 +398,15 @@ export function DataTable<T>({
   const Body = sortedRows.length > VIRTUALIZE_THRESHOLD ? VirtualizedBody : PlainBody;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div
+      // The `ds-data-table` class is the typography reset that's applied
+      // globally to every DataTable instance (rules in globals.css). It
+      // forces Lato 14/normal across cells, headers, banners, filters and
+      // form controls — overriding browser UA defaults that otherwise
+      // surface system fonts in the form-control descendants.
+      className="ds-data-table"
+      style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+    >
       <div
         style={{
           display: 'flex',
@@ -340,13 +415,25 @@ export function DataTable<T>({
           gap: 12,
         }}
       >
-        {leadingNote ? (
-          <Text size="s" color="secondary">
-            {leadingNote}
-          </Text>
-        ) : (
-          <span />
-        )}
+        {(() => {
+          // Auto row-count: shows "Showing X of Y rows" while any filter is
+          // narrowing the set, otherwise just "Y rows". Computed inside the
+          // table so it stays in sync with the live filter state — parents
+          // can't see `filteredRows` from the outside. Optional `leadingNote`
+          // is appended after the count for callers that want extra context.
+          const total = rows.length;
+          const shown = filteredRows.length;
+          const countText =
+            shown === total
+              ? `${total.toLocaleString()} rows`
+              : `Showing ${shown.toLocaleString()} of ${total.toLocaleString()} rows`;
+          const text = leadingNote ? `${countText} · ${leadingNote}` : countText;
+          return (
+            <Text size="s" color="secondary">
+              {text}
+            </Text>
+          );
+        })()}
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           <ColumnsMenu columns={columns} hidden={hidden} onToggle={toggleHidden} />
           <Button
@@ -379,6 +466,8 @@ export function DataTable<T>({
         }
         stringFilters={stringFilters}
         onStringFilterChange={setStringFilter}
+        textFilters={textFilters}
+        onTextFilterChange={setTextFilter}
         uniqueFilterValues={uniqueFilterValues}
         widths={widths}
         onResize={setColumnWidth}
@@ -446,6 +535,8 @@ function HeaderCell<T>({
   onNumFilterChange,
   stringFilter,
   onStringFilterChange,
+  textFilter,
+  onTextFilterChange,
   uniqueValues,
   onResize,
   width,
@@ -456,8 +547,10 @@ function HeaderCell<T>({
   onSortSet: (key: string, dir: 'asc' | 'desc' | null) => void;
   numFilter: NumericFilter | null;
   onNumFilterChange: (key: string, next: NumericFilter | null) => void;
-  stringFilter: string | null;
-  onStringFilterChange: (key: string, next: string | null) => void;
+  stringFilter: string[] | null;
+  onStringFilterChange: (key: string, next: string[] | null) => void;
+  textFilter: string | null;
+  onTextFilterChange: (key: string, next: string | null) => void;
   uniqueValues: string[] | undefined;
   onResize: (key: string, next: number) => void;
   width: number | string | undefined;
@@ -466,8 +559,15 @@ function HeaderCell<T>({
   const sortable = Boolean(column.accessor);
   const filterable = column.filterable === true;
   const isNumber = column.type === 'number';
+  const isContains = column.filterMode === 'contains';
   const sortDir = sort?.key === column.key ? sort.dir : null;
-  const filterActive = isNumber ? Boolean(numFilter) : Boolean(stringFilter);
+  const stringFilterCount = stringFilter?.length ?? 0;
+  const textFilterActive = typeof textFilter === 'string' && textFilter.trim() !== '';
+  const filterActive = isNumber
+    ? Boolean(numFilter)
+    : isContains
+      ? textFilterActive
+      : stringFilterCount > 0;
   const interactable = sortable || filterable;
   const thRef = useRef<HTMLTableCellElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
@@ -506,7 +606,9 @@ function HeaderCell<T>({
         // the right edge — without a divider users couldn't tell where one
         // column ended and the next began.
         borderRight: '1px solid var(--ads-c-divider, rgba(0,0,0,0.1))',
-        fontWeight: 600,
+        // Match the DS Tabs nav font (14 Lato), at normal weight rather
+        // than the tab's bold — same family/size as the rest of the table.
+        fontWeight: 400,
         whiteSpace: 'nowrap',
         width,
         // Opaque so rows don't bleed through when the header is sticky.
@@ -575,9 +677,13 @@ function HeaderCell<T>({
             {filterActive ? (
               <span
                 aria-hidden
-                style={{ fontSize: 9, color: 'var(--ads-c-text-accent, #0055aa)' }}
+                style={{
+                  fontSize: 11,
+                  color: 'var(--ads-c-text-accent, #0055aa)',
+                  fontWeight: 700,
+                }}
               >
-                ●
+                {stringFilterCount > 1 ? `(${stringFilterCount})` : '●'}
               </span>
             ) : null}
           </button>
@@ -591,9 +697,11 @@ function HeaderCell<T>({
           sortable={sortable}
           filterable={filterable}
           isNumber={isNumber}
+          isContains={isContains}
           sortDir={sortDir}
           numFilter={numFilter}
           stringFilter={stringFilter}
+          textFilter={textFilter}
           uniqueValues={uniqueValues}
           anchorRef={buttonRef}
           onClose={() => setMenuOpen(false)}
@@ -606,6 +714,9 @@ function HeaderCell<T>({
           }}
           onStringFilterChange={(next) => {
             onStringFilterChange(column.key, next);
+          }}
+          onTextFilterChange={(next) => {
+            onTextFilterChange(column.key, next);
           }}
         />
       ) : null}
@@ -648,29 +759,35 @@ function HeaderMenu<T>({
   sortable,
   filterable,
   isNumber,
+  isContains,
   sortDir,
   numFilter,
   stringFilter,
+  textFilter,
   uniqueValues,
   anchorRef,
   onClose,
   onSortSet,
   onNumFilterChange,
   onStringFilterChange,
+  onTextFilterChange,
 }: {
   column: Column<T>;
   sortable: boolean;
   filterable: boolean;
   isNumber: boolean;
+  isContains: boolean;
   sortDir: 'asc' | 'desc' | null;
   numFilter: NumericFilter | null;
-  stringFilter: string | null;
+  stringFilter: string[] | null;
+  textFilter: string | null;
   uniqueValues: string[] | undefined;
   anchorRef: React.RefObject<HTMLButtonElement | null>;
   onClose: () => void;
   onSortSet: (dir: 'asc' | 'desc' | null) => void;
   onNumFilterChange: (next: NumericFilter | null) => void;
-  onStringFilterChange: (next: string | null) => void;
+  onStringFilterChange: (next: string[] | null) => void;
+  onTextFilterChange: (next: string | null) => void;
 }) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [coords, setCoords] = useState<{ top: number; right: number } | null>(null);
@@ -678,6 +795,16 @@ function HeaderMenu<T>({
   const [numStr, setNumStr] = useState<string>(
     numFilter?.value !== undefined ? String(numFilter.value) : '',
   );
+  // A column whose `type` is 'number' (for sort/comparator) but which supplies
+  // a fixed `filterOptions` list is categorical for *filtering* purposes —
+  // the rank is just for ordering. Treat those as dropdown filters; the
+  // numeric op+value UI is reserved for free-form numeric ranges.
+  const useNumericFilter = isNumber && !column.filterOptions;
+  // 'contains' takes precedence over the multi-select UI — both are
+  // non-numeric, but the column author has explicitly opted into free-form
+  // text search.
+  const useContainsFilter = !useNumericFilter && isContains;
+  const useSelectFilter = !useNumericFilter && !useContainsFilter;
 
   // Recompute anchor coords on open and any layout-affecting change.
   useEffect(() => {
@@ -754,7 +881,7 @@ function HeaderMenu<T>({
         overflowY: 'auto',
       }}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' && filterable && isNumber) {
+        if (e.key === 'Enter' && filterable && useNumericFilter) {
           e.preventDefault();
           applyNumFilter();
         }
@@ -781,7 +908,7 @@ function HeaderMenu<T>({
         </>
       ) : null}
 
-      {filterable && isNumber ? (
+      {filterable && useNumericFilter ? (
         <>
           {sortable ? <MenuDivider /> : null}
           <MenuSectionLabel>Filter</MenuSectionLabel>
@@ -794,6 +921,9 @@ function HeaderMenu<T>({
                 border: '1px solid var(--ads-c-divider, rgba(0,0,0,0.15))',
                 borderRadius: 4,
                 fontSize: 13,
+                // Form controls have their own UA-default font; inherit so
+                // they pick up the body's Lato instead of the platform UI font.
+                fontFamily: 'inherit',
               }}
             >
               <option value=">=">≥</option>
@@ -815,6 +945,7 @@ function HeaderMenu<T>({
                 borderRadius: 4,
                 fontSize: 13,
                 minWidth: 0,
+                fontFamily: 'inherit',
               }}
             />
           </div>
@@ -862,35 +993,306 @@ function HeaderMenu<T>({
         </>
       ) : null}
 
-      {filterable && !isNumber ? (
-        <>
-          {sortable ? <MenuDivider /> : null}
-          <MenuSectionLabel>Filter</MenuSectionLabel>
-          <MenuItem
-            active={!stringFilter}
-            onClick={() => {
-              onStringFilterChange(null);
-              onClose();
-            }}
-          >
-            All
-          </MenuItem>
-          {options.map((opt) => (
-            <MenuItem
-              key={opt.value}
-              active={stringFilter === opt.value}
-              onClick={() => {
-                onStringFilterChange(opt.value);
-                onClose();
-              }}
-            >
-              {opt.label}
-            </MenuItem>
-          ))}
-        </>
+      {filterable && useSelectFilter ? (
+        <CategoricalFilter
+          options={options}
+          selected={stringFilter ?? []}
+          showSortDivider={sortable}
+          onChange={onStringFilterChange}
+          onClose={onClose}
+        />
+      ) : null}
+
+      {filterable && useContainsFilter ? (
+        <ContainsFilter
+          value={textFilter}
+          showSortDivider={sortable}
+          onChange={onTextFilterChange}
+          onClose={onClose}
+        />
       ) : null}
     </div>,
     document.body,
+  );
+}
+
+/**
+ * Multi-select filter section rendered inside the header dropdown for
+ * categorical columns. Shows a typeahead that narrows the option list, a
+ * row of bulk affordances ("All" / "None" scoped to the current matches),
+ * and a checkbox per option. Closes are caller-controlled — selection
+ * doesn't auto-close so users can pick several values in one open.
+ */
+function CategoricalFilter({
+  options,
+  selected,
+  showSortDivider,
+  onChange,
+  onClose,
+}: {
+  options: Array<{ value: string; label: string }>;
+  selected: string[];
+  showSortDivider: boolean;
+  onChange: (next: string[] | null) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  // Auto-focus the search field when the menu opens. Using a ref-effect (vs
+  // `autoFocus`) avoids the JSX-a11y lint hit and keeps the focus behavior
+  // explicit at mount time.
+  useEffect(() => {
+    searchRef.current?.focus();
+  }, []);
+
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const visibleOptions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter(
+      (o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
+    );
+  }, [options, query]);
+
+  const toggle = (value: string) => {
+    if (selectedSet.has(value)) {
+      const next = selected.filter((v) => v !== value);
+      onChange(next.length > 0 ? next : null);
+    } else {
+      onChange([...selected, value]);
+    }
+  };
+
+  const selectAllVisible = () => {
+    const next = new Set(selected);
+    for (const o of visibleOptions) next.add(o.value);
+    onChange(next.size > 0 ? [...next] : null);
+  };
+
+  const clearVisible = () => {
+    if (visibleOptions.length === options.length) {
+      // No active query — "None" clears everything.
+      onChange(null);
+      return;
+    }
+    const visibleVals = new Set(visibleOptions.map((o) => o.value));
+    const next = selected.filter((v) => !visibleVals.has(v));
+    onChange(next.length > 0 ? next : null);
+  };
+
+  return (
+    <>
+      {showSortDivider ? <MenuDivider /> : null}
+      <MenuSectionLabel>
+        Filter{selected.length > 0 ? ` · ${selected.length} selected` : ''}
+      </MenuSectionLabel>
+      <div style={{ padding: '4px 6px' }}>
+        <input
+          ref={searchRef}
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search…"
+          onKeyDown={(e) => {
+            // Enter on a single visible result is a quick "toggle this one"
+            // shortcut. Escape bubbles up to the popover for dismiss.
+            if (e.key === 'Enter' && visibleOptions.length === 1) {
+              e.preventDefault();
+              toggle(visibleOptions[0].value);
+            }
+          }}
+          style={{
+            width: '100%',
+            padding: '4px 8px',
+            border: '1px solid var(--ads-c-divider, rgba(0,0,0,0.15))',
+            borderRadius: 4,
+            fontSize: 13,
+            font: 'inherit',
+          }}
+        />
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          gap: 6,
+          padding: '0 6px 4px',
+          fontSize: 12,
+        }}
+      >
+        <button
+          type="button"
+          onClick={selectAllVisible}
+          disabled={visibleOptions.length === 0}
+          style={miniButtonStyle}
+        >
+          {query ? 'Select matches' : 'Select all'}
+        </button>
+        <button type="button" onClick={clearVisible} style={miniButtonStyle}>
+          {query ? 'Clear matches' : 'Clear'}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{ ...miniButtonStyle, marginLeft: 'auto' }}
+        >
+          Done
+        </button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+        {visibleOptions.length === 0 ? (
+          <div
+            style={{
+              padding: '8px 10px',
+              fontSize: 12,
+              color: 'var(--ads-c-text-secondary, rgba(0,0,0,0.55))',
+            }}
+          >
+            No matches.
+          </div>
+        ) : (
+          visibleOptions.map((opt) => {
+            const checked = selectedSet.has(opt.value);
+            return (
+              <label
+                key={opt.value}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '5px 8px',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  background: checked
+                    ? 'var(--ads-c-surface-accent, rgba(0, 90, 180, 0.10))'
+                    : 'transparent',
+                }}
+                onMouseEnter={(e) => {
+                  if (!checked) e.currentTarget.style.background = 'rgba(0,0,0,0.04)';
+                }}
+                onMouseLeave={(e) => {
+                  if (!checked) e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(opt.value)}
+                />
+                <span>{opt.label}</span>
+              </label>
+            );
+          })
+        )}
+      </div>
+    </>
+  );
+}
+
+const miniButtonStyle: React.CSSProperties = {
+  background: 'none',
+  border: '1px solid var(--ads-c-divider, rgba(0,0,0,0.15))',
+  borderRadius: 4,
+  padding: '3px 8px',
+  fontSize: 12,
+  cursor: 'pointer',
+  font: 'inherit',
+};
+
+/**
+ * Free-form text filter section rendered inside the header dropdown for
+ * columns with `filterMode: 'contains'`. Used for free-form fields like
+ * Description where a checkbox list of unique values would be useless. Keeps
+ * a local draft so the row set isn't re-filtered on every keystroke; commits
+ * on blur, Enter, or Apply. Esc reverts the draft to the committed value.
+ */
+function ContainsFilter({
+  value,
+  showSortDivider,
+  onChange,
+  onClose,
+}: {
+  value: string | null;
+  showSortDivider: boolean;
+  onChange: (next: string | null) => void;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState<string>(value ?? '');
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  // Auto-focus the search box on open. Mirrors CategoricalFilter behavior so
+  // both filter modes feel identical to the keyboard.
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  // Pull the committed value back into the draft if the parent clears the
+  // filter externally (e.g. via the toolbar's "Clear filters" button).
+  useEffect(() => {
+    setDraft(value ?? '');
+  }, [value]);
+
+  const apply = () => {
+    onChange(draft.trim() === '' ? null : draft);
+    onClose();
+  };
+
+  const clear = () => {
+    setDraft('');
+    onChange(null);
+  };
+
+  return (
+    <>
+      {showSortDivider ? <MenuDivider /> : null}
+      <MenuSectionLabel>Contains{value ? ' · active' : ''}</MenuSectionLabel>
+      <div style={{ padding: '4px 6px' }}>
+        <input
+          ref={inputRef}
+          type="search"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              apply();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              setDraft(value ?? '');
+              onClose();
+            }
+          }}
+          placeholder="Type to filter…"
+          style={{
+            width: '100%',
+            padding: '6px 8px',
+            border: '1px solid var(--ads-c-divider, rgba(0,0,0,0.15))',
+            borderRadius: 4,
+            fontSize: 13,
+            font: 'inherit',
+          }}
+        />
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          gap: 6,
+          padding: '0 6px 4px',
+          fontSize: 12,
+        }}
+      >
+        <button type="button" onClick={clear} style={miniButtonStyle}>
+          Clear
+        </button>
+        <button
+          type="button"
+          onClick={apply}
+          style={{ ...miniButtonStyle, marginLeft: 'auto' }}
+        >
+          Apply
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -1330,8 +1732,10 @@ type BodyProps<T> = {
   onSortSet: (key: string, dir: 'asc' | 'desc' | null) => void;
   numFilters: Record<string, NumericFilter | null>;
   onNumFilterChange: (key: string, next: NumericFilter | null) => void;
-  stringFilters: Record<string, string | null>;
-  onStringFilterChange: (key: string, next: string | null) => void;
+  stringFilters: Record<string, string[] | null>;
+  onStringFilterChange: (key: string, next: string[] | null) => void;
+  textFilters: Record<string, string | null>;
+  onTextFilterChange: (key: string, next: string | null) => void;
   uniqueFilterValues: Record<string, string[]>;
   widths: Record<string, number>;
   onResize: (key: string, next: number) => void;
@@ -1410,6 +1814,8 @@ function Header<T>({
   onNumFilterChange,
   stringFilters,
   onStringFilterChange,
+  textFilters,
+  onTextFilterChange,
   uniqueFilterValues,
   widths,
   onResize,
@@ -1436,10 +1842,12 @@ function Header<T>({
                   borderBottom: run.group
                     ? `2px solid ${style.border}`
                     : '1px solid transparent',
-                  fontSize: 11,
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.06em',
+                  // Match the DS Tabs nav: 14 Lato, normal weight (the user
+                  // wants tab-style typography across the table without the
+                  // bold). Color (per group) plus the bottom border still
+                  // distinguish banners from the column header row.
+                  fontSize: 14,
+                  fontWeight: 400,
                   textAlign: 'left',
                   position: 'sticky',
                   top: 0,
@@ -1463,6 +1871,8 @@ function Header<T>({
             onNumFilterChange={onNumFilterChange}
             stringFilter={stringFilters[c.key] ?? null}
             onStringFilterChange={onStringFilterChange}
+            textFilter={textFilters[c.key] ?? null}
+            onTextFilterChange={onTextFilterChange}
             uniqueValues={uniqueFilterValues[c.key]}
             onResize={onResize}
             width={effectiveWidth(c, widths)}
