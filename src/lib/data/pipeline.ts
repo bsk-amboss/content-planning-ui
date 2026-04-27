@@ -6,7 +6,7 @@
  * dashboard within a few seconds of DB truth without saturating the DB.
  */
 
-import { asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { cacheLife, cacheTag } from 'next/cache';
 import { getDb } from '@/lib/db';
 import { pipelineEvents, pipelineRuns, pipelineStages } from '@/lib/db/schema';
@@ -190,6 +190,53 @@ export async function getLatestStageContexts(
     };
   }
   return out;
+}
+
+/**
+ * History of every map_codes activity for a specialty: each pipeline run that
+ * touched map_codes (extracted from the events table, since per-code remap-code
+ * runs each get their own pipeline_runs row), plus all map_codes events for
+ * those runs. Used by the Map codes stage card to render Overall + per-run
+ * navigation of metadata and logs.
+ *
+ * Returned `runs` are sorted newest-first.
+ */
+export type MapCodesHistory = {
+  runs: PipelineRunRow[];
+  events: PipelineEventRow[];
+};
+
+export async function getMapCodesHistory(slug: string): Promise<MapCodesHistory> {
+  'use cache';
+  cacheTag(`pipeline:${slug}`);
+  cacheLife('seconds');
+  const db = getDb();
+  // Pull every map_codes event for the specialty in one shot (joining to runs
+  // so we filter by specialty without round-tripping through pipeline_runs).
+  const eventRows = await db
+    .select({
+      id: pipelineEvents.id,
+      runId: pipelineEvents.runId,
+      stage: pipelineEvents.stage,
+      level: pipelineEvents.level,
+      message: pipelineEvents.message,
+      metrics: pipelineEvents.metrics,
+      createdAt: pipelineEvents.createdAt,
+    })
+    .from(pipelineEvents)
+    .innerJoin(pipelineRuns, eq(pipelineEvents.runId, pipelineRuns.id))
+    .where(
+      and(eq(pipelineRuns.specialtySlug, slug), eq(pipelineEvents.stage, 'map_codes')),
+    )
+    .orderBy(asc(pipelineEvents.createdAt));
+  if (eventRows.length === 0) return { runs: [], events: [] };
+  const runIds = [...new Set(eventRows.map((e) => e.runId))];
+  const runs = await db
+    .select()
+    .from(pipelineRuns)
+    .where(and(eq(pipelineRuns.specialtySlug, slug), inArray(pipelineRuns.id, runIds)))
+    .orderBy(desc(pipelineRuns.startedAt));
+  return { runs, events: eventRows as PipelineEventRow[] };
 }
 
 /**

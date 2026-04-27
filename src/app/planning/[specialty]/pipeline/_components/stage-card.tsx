@@ -1,8 +1,24 @@
 'use client';
 
-import { Badge, Button, Card, CardBox, Inline, Stack, Text } from '@amboss/design-system';
-import { useState } from 'react';
-import type { PipelineEventRow, PipelineStageRow } from '@/lib/data/pipeline';
+import {
+  Badge,
+  Box,
+  Button,
+  Card,
+  CardBox,
+  Divider,
+  H5,
+  Inline,
+  Stack,
+  Text,
+} from '@amboss/design-system';
+import { useEffect, useState } from 'react';
+import type {
+  MapCodesHistory,
+  PipelineEventRow,
+  PipelineRunRow,
+  PipelineStageRow,
+} from '@/lib/data/pipeline';
 import type { StageName } from '@/lib/workflows/lib/db-writes';
 import {
   type CodeSource,
@@ -12,6 +28,34 @@ import {
 import { ApproveButton } from './approve-button';
 import { CancelButton } from './cancel-button';
 import { ResetButton } from './reset-button';
+
+/**
+ * Persist a boolean flag in localStorage. Defaults to `false` on first paint
+ * (so SSR matches), then snaps to the stored value once mounted. Writes back
+ * on every change. Scoped per-key so each card can have its own setting.
+ */
+function useStoredBoolean(
+  key: string,
+  fallback: boolean,
+): [boolean, (v: boolean) => void] {
+  const [value, setValue] = useState(fallback);
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (raw === '1') setValue(true);
+      else if (raw === '0') setValue(false);
+    } catch {}
+    setHydrated(true);
+  }, [key]);
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      window.localStorage.setItem(key, value ? '1' : '0');
+    } catch {}
+  }, [key, value, hydrated]);
+  return [value, setValue];
+}
 
 type StageStatus =
   | 'pending'
@@ -203,6 +247,7 @@ function CollapsibleSubsection({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
         style={{
           background: 'none',
           border: 'none',
@@ -237,6 +282,248 @@ function summaryPairs(summary: unknown): Array<[string, string]> {
   ]);
 }
 
+/**
+ * Sum per-event metrics for a window of map_codes events. Mirrors
+ * aggregateStageMetrics in the workflow lib so Overall/per-run views agree
+ * with what the workflow itself wrote at run completion.
+ */
+function aggregateMapEvents(events: PipelineEventRow[]) {
+  let apiCalls = 0;
+  let computeMs = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let reasoningTokens = 0;
+  let costUsd = 0;
+  let anyCost = false;
+  const codes = new Set<string>();
+  for (const e of events) {
+    const m = (e.metrics ?? {}) as Record<string, unknown>;
+    if (typeof m.code === 'string') codes.add(m.code);
+    if (typeof m.durationMs === 'number' && m.durationMs > 0) {
+      apiCalls += 1;
+      computeMs += m.durationMs;
+    }
+    if (typeof m.inputTokens === 'number') inputTokens += m.inputTokens;
+    if (typeof m.outputTokens === 'number') outputTokens += m.outputTokens;
+    if (typeof m.reasoningTokens === 'number') reasoningTokens += m.reasoningTokens;
+    if (typeof m.costUsd === 'number') {
+      costUsd += m.costUsd;
+      anyCost = true;
+    }
+  }
+  return {
+    apiCalls,
+    computeMs,
+    inputTokens,
+    outputTokens,
+    reasoningTokens,
+    costUsd: anyCost ? costUsd : null,
+    codesMapped: codes.size,
+  };
+}
+
+/** Specialty-wide "X mapped, Y unmapped" tally for the Map codes card. The
+ *  mapped count is the number of distinct codes that show up in any map_codes
+ *  event (across every run); unmapped is whatever the server has left in
+ *  the codes table. Returns null when neither side has anything to say. */
+function buildMapCodesSummary(
+  history: MapCodesHistory,
+  unmapped: number | undefined,
+): string | null {
+  const mappedCodes = new Set<string>();
+  for (const e of history.events) {
+    const m = (e.metrics ?? {}) as Record<string, unknown>;
+    if (typeof m.code === 'string') mappedCodes.add(m.code);
+  }
+  const mapped = mappedCodes.size;
+  if (mapped === 0 && (unmapped === undefined || unmapped === 0)) return null;
+  const parts: string[] = [];
+  parts.push(`${mapped} mapped`);
+  if (typeof unmapped === 'number') parts.push(`${unmapped} unmapped`);
+  return parts.join(', ');
+}
+
+function runLabel(run: PipelineRunRow): string {
+  const ts = run.startedAt
+    ? new Date(run.startedAt).toLocaleString()
+    : run.id.slice(0, 8);
+  const status = run.status ? ` · ${run.status}` : '';
+  return `${ts}${status}`;
+}
+
+function MapMetadataBody({
+  events,
+  run,
+}: {
+  events: PipelineEventRow[];
+  run: PipelineRunRow | null;
+}) {
+  const totals = aggregateMapEvents(events);
+  const rows: Array<[string, string]> = [];
+  rows.push(['Codes mapped', String(totals.codesMapped)]);
+  rows.push(['API calls', String(totals.apiCalls)]);
+  const totalTokens = totals.inputTokens + totals.outputTokens + totals.reasoningTokens;
+  if (totalTokens > 0) {
+    rows.push(['Tokens', totalTokens.toLocaleString()]);
+    if (totals.inputTokens > 0)
+      rows.push(['  · input', totals.inputTokens.toLocaleString()]);
+    if (totals.outputTokens > 0)
+      rows.push(['  · output', totals.outputTokens.toLocaleString()]);
+    if (totals.reasoningTokens > 0)
+      rows.push(['  · reasoning', totals.reasoningTokens.toLocaleString()]);
+  }
+  if (totals.costUsd != null) {
+    const c = formatCost(totals.costUsd);
+    if (c) rows.push(['Cost', c]);
+  }
+  // Per-run only: duration + run-level scope info.
+  if (run) {
+    if (run.startedAt && run.finishedAt) {
+      const durationMs =
+        new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime();
+      if (durationMs > 0) rows.push(['Duration', formatMs(durationMs)]);
+    }
+    const mf = (run.mappingFilter ?? null) as {
+      categories?: string[];
+      codes?: string[];
+    } | null;
+    if (mf?.categories?.length) rows.push(['Categories', mf.categories.join(', ')]);
+    if (mf?.codes?.length)
+      rows.push([
+        'Code filter',
+        `${mf.codes.length} code${mf.codes.length === 1 ? '' : 's'}`,
+      ]);
+    if (run.workflowRunId) rows.push(['Workflow', run.workflowRunId]);
+  }
+  return (
+    <Stack space="xxs">
+      {rows.map(([k, v]) => (
+        <Text key={k} color="secondary">
+          {k}: {v}
+        </Text>
+      ))}
+    </Stack>
+  );
+}
+
+function MapLogBody({ events }: { events: PipelineEventRow[] }) {
+  if (events.length === 0) {
+    return <Text color="secondary">No events.</Text>;
+  }
+  return (
+    <div
+      style={{
+        maxHeight: 320,
+        overflowY: 'auto',
+        background: 'var(--color-gray-50, #f8f8f8)',
+        border: '1px solid var(--color-gray-200, #e5e5e5)',
+        borderRadius: 4,
+        padding: 8,
+        fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+        fontSize: 12,
+        lineHeight: 1.5,
+      }}
+    >
+      {events.map((e) => {
+        const m = (e.metrics ?? {}) as Record<string, unknown>;
+        const ts = new Date(e.createdAt).toLocaleTimeString();
+        const metaParts: string[] = [];
+        if (typeof m.durationMs === 'number') metaParts.push(formatMs(m.durationMs));
+        const cost = formatCost(m.costUsd);
+        if (cost) metaParts.push(cost);
+        const total =
+          (typeof m.inputTokens === 'number' ? m.inputTokens : 0) +
+          (typeof m.outputTokens === 'number' ? m.outputTokens : 0) +
+          (typeof m.reasoningTokens === 'number' ? m.reasoningTokens : 0);
+        const tokens = formatTokens(total);
+        if (tokens) metaParts.push(`${tokens} tokens`);
+        return (
+          <div
+            key={e.id}
+            style={{
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            <span style={{ color: 'var(--color-gray-500, #737373)' }}>[{ts}]</span>{' '}
+            <span style={{ color: LEVEL_COLOR[e.level] ?? 'inherit' }}>
+              {LEVEL_ICON[e.level] ?? '•'}
+            </span>{' '}
+            {e.message}
+            {metaParts.length > 0 ? (
+              <span style={{ color: 'var(--color-gray-500, #737373)' }}>
+                {' '}
+                · {metaParts.join(' · ')}
+              </span>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Arrow-navigated browser over `Overall + each run`. Index 0 = Overall (sums
+ * across every map_codes run); subsequent indices are individual runs sorted
+ * newest-first. The same selection state drives both metadata and log views,
+ * but each instance is independent (so you can browse metadata for one run
+ * and logs for another if you really want to).
+ */
+function MapCodesRunBrowser({
+  history,
+  mode,
+}: {
+  history: MapCodesHistory;
+  mode: 'metadata' | 'logs';
+}) {
+  const [index, setIndex] = useState(0);
+  const total = history.runs.length + 1; // +1 for the Overall index
+  const clamped = Math.min(Math.max(0, index), total - 1);
+  const isOverall = clamped === 0;
+  const run = isOverall ? null : history.runs[clamped - 1];
+  const eventsForView = isOverall
+    ? history.events
+    : history.events.filter((e) => run !== null && e.runId === run.id);
+  const label = isOverall
+    ? `Overall · ${history.runs.length} run${history.runs.length === 1 ? '' : 's'}`
+    : run
+      ? runLabel(run)
+      : '';
+
+  return (
+    <Stack space="xs">
+      <Inline space="xs" vAlignItems="center">
+        <Button
+          type="button"
+          variant="tertiary"
+          disabled={clamped === 0}
+          onClick={() => setIndex(clamped - 1)}
+        >
+          ◀
+        </Button>
+        <Text color="secondary">
+          {label} ({clamped + 1} of {total})
+        </Text>
+        <Button
+          type="button"
+          variant="tertiary"
+          disabled={clamped === total - 1}
+          onClick={() => setIndex(clamped + 1)}
+        >
+          ▶
+        </Button>
+      </Inline>
+      {mode === 'metadata' ? (
+        <MapMetadataBody events={eventsForView} run={run} />
+      ) : (
+        <MapLogBody events={eventsForView} />
+      )}
+    </Stack>
+  );
+}
+
 export function StageCard({
   title,
   description,
@@ -249,6 +536,8 @@ export function StageCard({
   treatAsInProgress,
   alwaysShowReset,
   continueAction,
+  mapCodesHistory,
+  unmappedCount,
 }: {
   title: string;
   description?: string;
@@ -275,11 +564,29 @@ export function StageCard({
    *  caller is responsible for clearing zombie pipeline runs and revealing
    *  whatever follow-up form is needed. */
   continueAction?: { label: string; onClick: () => void | Promise<void> };
+  /** When provided, the Map codes card replaces its per-stage Metadata + Log
+   *  sections with arrow-navigated views over every map_codes run for the
+   *  specialty (Overall first). Drops the per-code Output section entirely
+   *  and removes Started/Finished timestamps. Only meaningful for the
+   *  `map_codes` card; ignored for other stages. */
+  mapCodesHistory?: MapCodesHistory;
+  /** Specialty-level count of codes still unmapped. When passed alongside
+   *  `mapCodesHistory`, the Map codes summary line becomes
+   *  `X mapped, Y unmapped`, replacing the per-run "X mapped" from
+   *  outputSummary and giving the user a true progress signal. */
+  unmappedCount?: number;
 }) {
   const runInputs = normalizeInputs(runUrls);
   const status = (stage?.status ?? 'pending') as StageStatus;
-  const summary = summaryLine(stage?.outputSummary);
-  const metrics = metricsLine(stage?.outputSummary);
+  const useMapHistory = stageName === 'map_codes' && mapCodesHistory !== undefined;
+  // Map codes shows a specialty-wide "X mapped, Y unmapped" tally instead of
+  // the per-run summary, since the card represents the whole stage and per-run
+  // numbers reset every batch. Suppress the metrics line for the same reason —
+  // overall API call / token totals live inside the per-run Metadata browser.
+  const summary = useMapHistory
+    ? buildMapCodesSummary(mapCodesHistory, unmappedCount)
+    : summaryLine(stage?.outputSummary);
+  const metrics = useMapHistory ? null : metricsLine(stage?.outputSummary);
   const approvable =
     stage?.stage === 'extract_codes' ||
     stage?.stage === 'extract_milestones' ||
@@ -295,10 +602,19 @@ export function StageCard({
   // Continue is only useful when nothing is mid-flight. While running or
   // awaiting_approval the user should drive the run via Cancel / Approve.
   const showContinue =
-    continueAction !== undefined && status !== 'running' && status !== 'awaiting_approval';
+    continueAction !== undefined &&
+    status !== 'running' &&
+    status !== 'awaiting_approval';
   const [continuing, setContinuing] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // Card-level collapse — clicking the header hides the body. Persisted per
+  // (specialty, stage) so a user's expand/collapse layout survives reloads.
+  const [bodyCollapsed, setBodyCollapsed] = useStoredBoolean(
+    `pipeline:${specialtySlug}:card-collapsed:${stageName}`,
+    false,
+  );
   const evs = events ?? [];
+  const hasMapHistory = useMapHistory && (mapCodesHistory?.events.length ?? 0) > 0;
   const hasDetails =
     stage !== null &&
     (stage.outputSummary ||
@@ -306,343 +622,401 @@ export function StageCard({
       stage.startedAt ||
       stage.errorMessage ||
       runInputs.length > 0 ||
-      evs.length > 0);
+      evs.length > 0 ||
+      hasMapHistory);
+  // Only let users collapse cards once the step has actually run — a pending
+  // card's body holds the preview / CTA copy that explains what the step does,
+  // and hiding that behind a click before anything has happened just makes the
+  // page harder to use.
+  const isPending = status === 'pending';
+  const collapsible = !isPending;
+  const showBody = !collapsible || !bodyCollapsed;
+  const headerInner = (
+    <Inline space="s" vAlignItems="center">
+      <H5 as="h4">{title}</H5>
+      <Badge text={badgeLabel} color={badgeColor} />
+    </Inline>
+  );
 
   return (
     <div className="card-fill">
-      <Card title={title} titleAs="h4" outlined>
-        <CardBox>
-          <Stack space="s">
-            <Badge text={badgeLabel} color={badgeColor} />
-            {description ? <Text color="secondary">{description}</Text> : null}
-            {summary ? <Text>{summary}</Text> : null}
-            {metrics ? <Text color="secondary">{metrics}</Text> : null}
-            {status === 'failed' && stage?.errorMessage ? (
-              <Text color="secondary">{stage.errorMessage}</Text>
-            ) : null}
-            <Inline space="s" vAlignItems="center">
-              {hasDetails ? (
-                <Button variant="tertiary" onClick={() => setExpanded((x) => !x)}>
-                  {expanded ? 'Hide details' : 'Show details'}
-                </Button>
+      <Card outlined>
+        <Box vSpace="m" lSpace="l" rSpace="l">
+          {collapsible ? (
+            <button
+              type="button"
+              onClick={() => setBodyCollapsed(!bodyCollapsed)}
+              aria-expanded={!bodyCollapsed}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                margin: 0,
+                cursor: 'pointer',
+                textAlign: 'left',
+                width: '100%',
+                font: 'inherit',
+                color: 'inherit',
+              }}
+            >
+              {headerInner}
+            </button>
+          ) : (
+            headerInner
+          )}
+        </Box>
+        {showBody && <Divider />}
+        {showBody && (
+          <CardBox>
+            <Stack space="s">
+              {description ? <Text color="secondary">{description}</Text> : null}
+              {summary ? <Text>{summary}</Text> : null}
+              {metrics ? <Text color="secondary">{metrics}</Text> : null}
+              {status === 'failed' && stage?.errorMessage ? (
+                <Text color="secondary">{stage.errorMessage}</Text>
               ) : null}
-              {status === 'awaiting_approval' && stage && approvable ? (
-                <ApproveButton
-                  runId={stage.runId}
-                  specialtySlug={specialtySlug}
-                  stage={
-                    stage.stage as 'extract_codes' | 'extract_milestones' | 'map_codes'
-                  }
-                />
-              ) : null}
-              {isCancellable && stage ? (
-                <CancelButton
-                  runId={stage.runId}
-                  specialtySlug={specialtySlug}
-                  stage={stageName}
-                />
-              ) : null}
-              {showReset && stage ? (
-                <ResetButton
-                  runId={stage.runId}
-                  specialtySlug={specialtySlug}
-                  stage={stageName}
-                />
-              ) : null}
-              {showContinue && continueAction ? (
-                <Button
-                  variant="primary"
-                  disabled={continuing}
-                  onClick={async () => {
-                    setContinuing(true);
-                    try {
-                      await continueAction.onClick();
-                    } finally {
-                      setContinuing(false);
+              <Inline space="s" vAlignItems="center">
+                {hasDetails ? (
+                  <Button variant="tertiary" onClick={() => setExpanded((x) => !x)}>
+                    {expanded ? 'Hide details' : 'Show details'}
+                  </Button>
+                ) : null}
+                {status === 'awaiting_approval' && stage && approvable ? (
+                  <ApproveButton
+                    runId={stage.runId}
+                    specialtySlug={specialtySlug}
+                    stage={
+                      stage.stage as 'extract_codes' | 'extract_milestones' | 'map_codes'
                     }
-                  }}
-                >
-                  {continuing ? 'Working…' : continueAction.label}
-                </Button>
-              ) : null}
-            </Inline>
-            {expanded && stage ? (
-              <Stack space="xs">
-                {formatTs(stage.startedAt) ? (
-                  <Text color="secondary">Started: {formatTs(stage.startedAt)}</Text>
+                  />
                 ) : null}
-                {formatTs(stage.finishedAt) ? (
-                  <Text color="secondary">Finished: {formatTs(stage.finishedAt)}</Text>
+                {isCancellable && stage ? (
+                  <CancelButton
+                    runId={stage.runId}
+                    specialtySlug={specialtySlug}
+                    stage={stageName}
+                  />
                 ) : null}
-                {formatTs(stage.approvedAt) ? (
-                  <Text color="secondary">
-                    Approved: {formatTs(stage.approvedAt)}
-                    {stage.approvedBy ? ` by ${stage.approvedBy}` : ''}
-                  </Text>
+                {showReset && stage ? (
+                  <ResetButton
+                    runId={stage.runId}
+                    specialtySlug={specialtySlug}
+                    stage={stageName}
+                  />
                 ) : null}
-                {(() => {
-                  // Milestones stage: single plain-text output. Read from the
-                  // most recent milestones-phase event's completion string, or
-                  // (as a fallback) from draftPayload.milestones which persists
-                  // through approval.
-                  if (stage.stage === 'extract_milestones') {
-                    const milestonesEvent = [...evs]
-                      .reverse()
-                      .find(
-                        (e) =>
-                          (e.metrics as { phase?: string } | null)?.phase ===
-                            'milestones' &&
-                          typeof (e.metrics as { completion?: unknown } | null)
-                            ?.completion === 'string',
-                      );
-                    const fromEvent =
-                      (milestonesEvent?.metrics as { completion?: string } | null)
-                        ?.completion ?? null;
-                    const fromDraft =
-                      (stage.draftPayload as { milestones?: string } | null)
-                        ?.milestones ?? null;
-                    const text = fromEvent ?? fromDraft;
-                    if (!text) return null;
-                    return (
-                      <CollapsibleSubsection title="Output">
-                        <pre
-                          style={{
-                            background: 'var(--color-gray-50, #f8f8f8)',
-                            border: '1px solid var(--color-gray-200, #e5e5e5)',
-                            borderRadius: 4,
-                            padding: 8,
-                            fontSize: 12,
-                            lineHeight: 1.5,
-                            maxHeight: 480,
-                            overflow: 'auto',
-                            whiteSpace: 'pre-wrap',
-                            margin: 0,
-                          }}
-                        >
-                          {text}
-                        </pre>
-                      </CollapsibleSubsection>
-                    );
-                  }
-                  if (stage.stage === 'map_codes') {
-                    // Mapping: browse per-code completions. Each event carries
-                    // the per-code metadata (attempts, model, invalidIds) +
-                    // the full parsed mapping in `completion`.
-                    const mapEvents = evs.filter(
-                      (e) =>
-                        (e.metrics as { phase?: string } | null)?.phase === 'map' &&
-                        (e.metrics as { completion?: unknown } | null)?.completion,
-                    );
-                    if (mapEvents.length === 0) return null;
-                    return (
-                      <CollapsibleSubsection title="Output">
-                        <CompletionBrowser
-                          events={mapEvents}
-                          emptyLabel="No mapping completions yet."
-                          renderLabel={(e) => {
-                            const m = (e.metrics ?? {}) as Record<string, unknown>;
-                            const code = typeof m.code === 'string' ? m.code : '';
-                            const model = typeof m.model === 'string' ? m.model : '';
-                            const attempts =
-                              typeof m.attempts === 'number' ? m.attempts : null;
-                            const invalidCount = Array.isArray(m.invalidIds)
-                              ? m.invalidIds.length
-                              : 0;
-                            const tail = [
-                              model,
-                              attempts !== null ? `${attempts} attempts` : null,
-                              invalidCount > 0 ? `${invalidCount} invalid IDs` : null,
-                            ]
-                              .filter(Boolean)
-                              .join(' · ');
-                            return `${code}${tail ? ` — ${tail}` : ''}`;
-                          }}
-                          renderItem={() => null}
-                          renderRaw={(event) => {
-                            const m = (event.metrics ?? {}) as Record<string, unknown>;
-                            const mapping = m.completion;
-                            return (
-                              <pre
-                                style={{
-                                  margin: 0,
-                                  fontSize: 11,
-                                  lineHeight: 1.5,
-                                  whiteSpace: 'pre-wrap',
-                                }}
-                              >
-                                {JSON.stringify(mapping, null, 2)}
-                              </pre>
-                            );
-                          }}
-                        />
-                      </CollapsibleSubsection>
-                    );
-                  }
-                  const phase1 = evs.filter(
-                    (e) => (e.metrics as { phase?: string } | null)?.phase === 'identify',
-                  );
-                  const phase2 = evs.filter(
-                    (e) => (e.metrics as { phase?: string } | null)?.phase === 'extract',
-                  );
-                  if (phase1.length === 0 && phase2.length === 0) return null;
-                  return (
-                    <CollapsibleSubsection title="Output">
-                      <Stack space="s">
-                        <Stack space="xxs">
-                          <Text weight="bold">Phase 1 — Identify modules</Text>
-                          <CompletionBrowser
-                            events={phase1}
-                            emptyLabel="No Phase 1 completions yet."
-                            renderLabel={(e) => {
-                              const m = (e.metrics ?? {}) as Record<string, unknown>;
-                              return typeof m.url === 'string' ? m.url : '';
-                            }}
-                            renderItem={(item, key) => {
-                              const obj = (item ?? {}) as { category?: string };
-                              return (
-                                <div key={key} style={{ padding: '2px 0' }}>
-                                  {obj.category ?? String(item)}
-                                </div>
-                              );
-                            }}
-                          />
-                        </Stack>
-                        <Stack space="xxs">
-                          <Text weight="bold">Phase 2 — Extract codes</Text>
-                          <CompletionBrowser
-                            events={phase2}
-                            emptyLabel="No Phase 2 completions yet."
-                            renderLabel={(e) => {
-                              const m = (e.metrics ?? {}) as Record<string, unknown>;
-                              const url = typeof m.url === 'string' ? m.url : '';
-                              const cat =
-                                typeof m.category === 'string' ? m.category : '';
-                              return cat ? `${url} · ${cat}` : url;
-                            }}
-                            renderItem={(item, key) => {
-                              const obj = (item ?? {}) as {
-                                category?: string;
-                                description?: string;
-                              };
-                              return (
-                                <div
-                                  key={key}
-                                  style={{
-                                    padding: '4px 0',
-                                    borderBottom:
-                                      '1px solid var(--color-gray-200, #e5e5e5)',
-                                  }}
-                                >
-                                  <div style={{ fontWeight: 'bold' }}>
-                                    {obj.description ?? ''}
-                                  </div>
-                                  <div style={{ color: '#737373' }}>
-                                    {obj.category ?? ''}
-                                  </div>
-                                </div>
-                              );
-                            }}
-                          />
-                        </Stack>
-                      </Stack>
-                    </CollapsibleSubsection>
-                  );
-                })()}
-                {summaryPairs(stage.outputSummary).length > 0 ? (
-                  <CollapsibleSubsection title="Metadata">
-                    {summaryPairs(stage.outputSummary).map(([k, v]) => (
-                      <Text key={k} color="secondary">
-                        {k}: {v}
-                      </Text>
-                    ))}
-                  </CollapsibleSubsection>
+                {showContinue && continueAction ? (
+                  <Button
+                    variant="primary"
+                    disabled={continuing}
+                    onClick={async () => {
+                      setContinuing(true);
+                      try {
+                        await continueAction.onClick();
+                      } finally {
+                        setContinuing(false);
+                      }
+                    }}
+                  >
+                    {continuing ? 'Working…' : continueAction.label}
+                  </Button>
                 ) : null}
-                {summaryPairs(stage.draftPayload).length > 0 ? (
-                  <CollapsibleSubsection title="Draft">
-                    <pre
-                      style={{
-                        background: 'var(--color-gray-50, #f5f5f5)',
-                        padding: 8,
-                        fontSize: 12,
-                        overflow: 'auto',
-                        margin: 0,
-                      }}
-                    >
-                      {JSON.stringify(stage.draftPayload, null, 2)}
-                    </pre>
-                  </CollapsibleSubsection>
-                ) : null}
-                {runInputs.length > 0 ? (
-                  <CollapsibleSubsection title="Inputs">
-                    {runInputs.map((inp) => (
-                      <Text key={inp.url} color="secondary">
-                        [{sourceLabel(inp.source, sources)}] {inp.url}
-                      </Text>
-                    ))}
-                  </CollapsibleSubsection>
-                ) : null}
-                {evs.length > 0 ? (
-                  <CollapsibleSubsection title={`Log · ${evs.length} events`}>
-                    <div
-                      style={{
-                        maxHeight: 320,
-                        overflowY: 'auto',
-                        background: 'var(--color-gray-50, #f8f8f8)',
-                        border: '1px solid var(--color-gray-200, #e5e5e5)',
-                        borderRadius: 4,
-                        padding: 8,
-                        fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-                        fontSize: 12,
-                        lineHeight: 1.5,
-                      }}
-                    >
-                      {evs.map((e) => {
-                        const m = (e.metrics ?? {}) as Record<string, unknown>;
-                        const ts = new Date(e.createdAt).toLocaleTimeString();
-                        const metaParts: string[] = [];
-                        if (typeof m.durationMs === 'number') {
-                          metaParts.push(formatMs(m.durationMs));
-                        }
-                        const cost = formatCost(m.costUsd);
-                        if (cost) metaParts.push(cost);
-                        const total =
-                          (typeof m.inputTokens === 'number' ? m.inputTokens : 0) +
-                          (typeof m.outputTokens === 'number' ? m.outputTokens : 0) +
-                          (typeof m.reasoningTokens === 'number' ? m.reasoningTokens : 0);
-                        const tokens = formatTokens(total);
-                        if (tokens) metaParts.push(`${tokens} tokens`);
-                        return (
-                          <div
-                            key={e.id}
+              </Inline>
+              {expanded && stage ? (
+                <Stack space="xs">
+                  {!useMapHistory && formatTs(stage.startedAt) ? (
+                    <Text color="secondary">Started: {formatTs(stage.startedAt)}</Text>
+                  ) : null}
+                  {!useMapHistory && formatTs(stage.finishedAt) ? (
+                    <Text color="secondary">Finished: {formatTs(stage.finishedAt)}</Text>
+                  ) : null}
+                  {formatTs(stage.approvedAt) ? (
+                    <Text color="secondary">
+                      Approved: {formatTs(stage.approvedAt)}
+                      {stage.approvedBy ? ` by ${stage.approvedBy}` : ''}
+                    </Text>
+                  ) : null}
+                  {(() => {
+                    // Milestones stage: single plain-text output. Read from the
+                    // most recent milestones-phase event's completion string, or
+                    // (as a fallback) from draftPayload.milestones which persists
+                    // through approval.
+                    if (stage.stage === 'extract_milestones') {
+                      const milestonesEvent = [...evs]
+                        .reverse()
+                        .find(
+                          (e) =>
+                            (e.metrics as { phase?: string } | null)?.phase ===
+                              'milestones' &&
+                            typeof (e.metrics as { completion?: unknown } | null)
+                              ?.completion === 'string',
+                        );
+                      const fromEvent =
+                        (milestonesEvent?.metrics as { completion?: string } | null)
+                          ?.completion ?? null;
+                      const fromDraft =
+                        (stage.draftPayload as { milestones?: string } | null)
+                          ?.milestones ?? null;
+                      const text = fromEvent ?? fromDraft;
+                      if (!text) return null;
+                      return (
+                        <CollapsibleSubsection title="Output">
+                          <pre
                             style={{
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
+                              background: 'var(--color-gray-50, #f8f8f8)',
+                              border: '1px solid var(--color-gray-200, #e5e5e5)',
+                              borderRadius: 4,
+                              padding: 8,
+                              fontSize: 12,
+                              lineHeight: 1.5,
+                              maxHeight: 480,
+                              overflow: 'auto',
+                              whiteSpace: 'pre-wrap',
+                              margin: 0,
                             }}
                           >
-                            <span style={{ color: 'var(--color-gray-500, #737373)' }}>
-                              [{ts}]
-                            </span>{' '}
-                            <span style={{ color: LEVEL_COLOR[e.level] ?? 'inherit' }}>
-                              {LEVEL_ICON[e.level] ?? '•'}
-                            </span>{' '}
-                            {e.message}
-                            {metaParts.length > 0 ? (
+                            {text}
+                          </pre>
+                        </CollapsibleSubsection>
+                      );
+                    }
+                    if (stage.stage === 'map_codes') {
+                      // When the new map_codes history view is wired up, the
+                      // per-code output browser is redundant — the codes table
+                      // is the canonical place for per-code detail. Skip it.
+                      if (useMapHistory) return null;
+                      // Mapping: browse per-code completions. Each event carries
+                      // the per-code metadata (attempts, model, invalidIds) +
+                      // the full parsed mapping in `completion`.
+                      const mapEvents = evs.filter(
+                        (e) =>
+                          (e.metrics as { phase?: string } | null)?.phase === 'map' &&
+                          (e.metrics as { completion?: unknown } | null)?.completion,
+                      );
+                      if (mapEvents.length === 0) return null;
+                      return (
+                        <CollapsibleSubsection title="Output">
+                          <CompletionBrowser
+                            events={mapEvents}
+                            emptyLabel="No mapping completions yet."
+                            renderLabel={(e) => {
+                              const m = (e.metrics ?? {}) as Record<string, unknown>;
+                              const code = typeof m.code === 'string' ? m.code : '';
+                              const model = typeof m.model === 'string' ? m.model : '';
+                              const attempts =
+                                typeof m.attempts === 'number' ? m.attempts : null;
+                              const invalidCount = Array.isArray(m.invalidIds)
+                                ? m.invalidIds.length
+                                : 0;
+                              const tail = [
+                                model,
+                                attempts !== null ? `${attempts} attempts` : null,
+                                invalidCount > 0 ? `${invalidCount} invalid IDs` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(' · ');
+                              return `${code}${tail ? ` — ${tail}` : ''}`;
+                            }}
+                            renderItem={() => null}
+                            renderRaw={(event) => {
+                              const m = (event.metrics ?? {}) as Record<string, unknown>;
+                              const mapping = m.completion;
+                              return (
+                                <pre
+                                  style={{
+                                    margin: 0,
+                                    fontSize: 11,
+                                    lineHeight: 1.5,
+                                    whiteSpace: 'pre-wrap',
+                                  }}
+                                >
+                                  {JSON.stringify(mapping, null, 2)}
+                                </pre>
+                              );
+                            }}
+                          />
+                        </CollapsibleSubsection>
+                      );
+                    }
+                    const phase1 = evs.filter(
+                      (e) =>
+                        (e.metrics as { phase?: string } | null)?.phase === 'identify',
+                    );
+                    const phase2 = evs.filter(
+                      (e) =>
+                        (e.metrics as { phase?: string } | null)?.phase === 'extract',
+                    );
+                    if (phase1.length === 0 && phase2.length === 0) return null;
+                    return (
+                      <CollapsibleSubsection title="Output">
+                        <Stack space="s">
+                          <Stack space="xxs">
+                            <Text weight="bold">Phase 1 — Identify modules</Text>
+                            <CompletionBrowser
+                              events={phase1}
+                              emptyLabel="No Phase 1 completions yet."
+                              renderLabel={(e) => {
+                                const m = (e.metrics ?? {}) as Record<string, unknown>;
+                                return typeof m.url === 'string' ? m.url : '';
+                              }}
+                              renderItem={(item, key) => {
+                                const obj = (item ?? {}) as { category?: string };
+                                return (
+                                  <div key={key} style={{ padding: '2px 0' }}>
+                                    {obj.category ?? String(item)}
+                                  </div>
+                                );
+                              }}
+                            />
+                          </Stack>
+                          <Stack space="xxs">
+                            <Text weight="bold">Phase 2 — Extract codes</Text>
+                            <CompletionBrowser
+                              events={phase2}
+                              emptyLabel="No Phase 2 completions yet."
+                              renderLabel={(e) => {
+                                const m = (e.metrics ?? {}) as Record<string, unknown>;
+                                const url = typeof m.url === 'string' ? m.url : '';
+                                const cat =
+                                  typeof m.category === 'string' ? m.category : '';
+                                return cat ? `${url} · ${cat}` : url;
+                              }}
+                              renderItem={(item, key) => {
+                                const obj = (item ?? {}) as {
+                                  category?: string;
+                                  description?: string;
+                                };
+                                return (
+                                  <div
+                                    key={key}
+                                    style={{
+                                      padding: '4px 0',
+                                      borderBottom:
+                                        '1px solid var(--color-gray-200, #e5e5e5)',
+                                    }}
+                                  >
+                                    <div style={{ fontWeight: 'bold' }}>
+                                      {obj.description ?? ''}
+                                    </div>
+                                    <div style={{ color: '#737373' }}>
+                                      {obj.category ?? ''}
+                                    </div>
+                                  </div>
+                                );
+                              }}
+                            />
+                          </Stack>
+                        </Stack>
+                      </CollapsibleSubsection>
+                    );
+                  })()}
+                  {useMapHistory && mapCodesHistory && hasMapHistory ? (
+                    <CollapsibleSubsection title="Metadata">
+                      <MapCodesRunBrowser history={mapCodesHistory} mode="metadata" />
+                    </CollapsibleSubsection>
+                  ) : summaryPairs(stage.outputSummary).length > 0 ? (
+                    <CollapsibleSubsection title="Metadata">
+                      {summaryPairs(stage.outputSummary).map(([k, v]) => (
+                        <Text key={k} color="secondary">
+                          {k}: {v}
+                        </Text>
+                      ))}
+                    </CollapsibleSubsection>
+                  ) : null}
+                  {summaryPairs(stage.draftPayload).length > 0 ? (
+                    <CollapsibleSubsection title="Draft">
+                      <pre
+                        style={{
+                          background: 'var(--color-gray-50, #f5f5f5)',
+                          padding: 8,
+                          fontSize: 12,
+                          overflow: 'auto',
+                          margin: 0,
+                        }}
+                      >
+                        {JSON.stringify(stage.draftPayload, null, 2)}
+                      </pre>
+                    </CollapsibleSubsection>
+                  ) : null}
+                  {runInputs.length > 0 ? (
+                    <CollapsibleSubsection title="Inputs">
+                      {runInputs.map((inp) => (
+                        <Text key={inp.url} color="secondary">
+                          [{sourceLabel(inp.source, sources)}] {inp.url}
+                        </Text>
+                      ))}
+                    </CollapsibleSubsection>
+                  ) : null}
+                  {useMapHistory && mapCodesHistory && hasMapHistory ? (
+                    <CollapsibleSubsection
+                      title={`Log · ${mapCodesHistory.events.length} events across ${mapCodesHistory.runs.length} run${mapCodesHistory.runs.length === 1 ? '' : 's'}`}
+                    >
+                      <MapCodesRunBrowser history={mapCodesHistory} mode="logs" />
+                    </CollapsibleSubsection>
+                  ) : evs.length > 0 ? (
+                    <CollapsibleSubsection title={`Log · ${evs.length} events`}>
+                      <div
+                        style={{
+                          maxHeight: 320,
+                          overflowY: 'auto',
+                          background: 'var(--color-gray-50, #f8f8f8)',
+                          border: '1px solid var(--color-gray-200, #e5e5e5)',
+                          borderRadius: 4,
+                          padding: 8,
+                          fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+                          fontSize: 12,
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        {evs.map((e) => {
+                          const m = (e.metrics ?? {}) as Record<string, unknown>;
+                          const ts = new Date(e.createdAt).toLocaleTimeString();
+                          const metaParts: string[] = [];
+                          if (typeof m.durationMs === 'number') {
+                            metaParts.push(formatMs(m.durationMs));
+                          }
+                          const cost = formatCost(m.costUsd);
+                          if (cost) metaParts.push(cost);
+                          const total =
+                            (typeof m.inputTokens === 'number' ? m.inputTokens : 0) +
+                            (typeof m.outputTokens === 'number' ? m.outputTokens : 0) +
+                            (typeof m.reasoningTokens === 'number'
+                              ? m.reasoningTokens
+                              : 0);
+                          const tokens = formatTokens(total);
+                          if (tokens) metaParts.push(`${tokens} tokens`);
+                          return (
+                            <div
+                              key={e.id}
+                              style={{
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                              }}
+                            >
                               <span style={{ color: 'var(--color-gray-500, #737373)' }}>
-                                {' '}
-                                · {metaParts.join(' · ')}
-                              </span>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CollapsibleSubsection>
-                ) : null}
-              </Stack>
-            ) : null}
-          </Stack>
-        </CardBox>
+                                [{ts}]
+                              </span>{' '}
+                              <span style={{ color: LEVEL_COLOR[e.level] ?? 'inherit' }}>
+                                {LEVEL_ICON[e.level] ?? '•'}
+                              </span>{' '}
+                              {e.message}
+                              {metaParts.length > 0 ? (
+                                <span style={{ color: 'var(--color-gray-500, #737373)' }}>
+                                  {' '}
+                                  · {metaParts.join(' · ')}
+                                </span>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </CollapsibleSubsection>
+                  ) : null}
+                </Stack>
+              ) : null}
+            </Stack>
+          </CardBox>
+        )}
       </Card>
     </div>
   );

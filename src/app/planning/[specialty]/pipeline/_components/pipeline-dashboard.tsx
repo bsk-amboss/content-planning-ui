@@ -14,7 +14,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { AmbossLibraryStats } from '@/lib/data/amboss-library';
 import type { CodeCategorySummary, UnmappedCodePickerRow } from '@/lib/data/codes';
-import type { PipelineRunRow, StageContext } from '@/lib/data/pipeline';
+import type { MapCodesHistory, PipelineRunRow, StageContext } from '@/lib/data/pipeline';
 import type { StageName } from '@/lib/workflows/lib/db-writes';
 import type { CodeSource } from '@/lib/workflows/lib/sources';
 import { PhaseGroup } from './phase-group';
@@ -37,6 +37,7 @@ export function PipelineDashboard({
   libraryStats,
   codeCategories,
   unmappedCodePicker,
+  mapCodesHistory,
 }: {
   specialtySlug: string;
   run: PipelineRunRow | null;
@@ -48,6 +49,7 @@ export function PipelineDashboard({
   libraryStats: AmbossLibraryStats;
   codeCategories: CodeCategorySummary[];
   unmappedCodePicker: UnmappedCodePickerRow[];
+  mapCodesHistory: MapCodesHistory;
 }) {
   const runActive =
     run !== null &&
@@ -135,6 +137,8 @@ export function PipelineDashboard({
                 events={stages.map_codes.events}
                 alwaysShowReset
                 treatAsInProgress={hasUnmappedCodes}
+                mapCodesHistory={mapCodesHistory}
+                unmappedCount={unmappedCodeCount}
               />
             );
           }
@@ -346,6 +350,8 @@ export function PipelineDashboard({
           events={stages.map_codes?.events ?? []}
           treatAsInProgress={hasUnmappedCodes}
           alwaysShowReset
+          mapCodesHistory={mapCodesHistory}
+          unmappedCount={unmappedCodeCount}
           continueAction={
             hasUnmappedCodes
               ? { label: 'Continue mapping', onClick: onContinueMapping }

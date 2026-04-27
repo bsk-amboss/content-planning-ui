@@ -7,7 +7,11 @@ import {
   listUnmappedCodesForPicker,
 } from '@/lib/data/codes';
 import { listMilestoneSources } from '@/lib/data/milestone-sources';
-import { getCurrentPipelineRun, getLatestStageContexts } from '@/lib/data/pipeline';
+import {
+  getCurrentPipelineRun,
+  getLatestStageContexts,
+  getMapCodesHistory,
+} from '@/lib/data/pipeline';
 import { getSpecialty } from '@/lib/data/specialties';
 import { PipelineDashboard } from './_components/pipeline-dashboard';
 
@@ -43,6 +47,7 @@ async function PipelineData({ slug }: { slug: string }) {
     specialty,
     codeCategories,
     unmappedCodePicker,
+    mapCodesHistory,
   ] = await Promise.all([
     getCurrentPipelineRun(slug),
     listCodeSources(),
@@ -53,6 +58,7 @@ async function PipelineData({ slug }: { slug: string }) {
     getSpecialty(slug),
     listCodeCategories(slug),
     listUnmappedCodesForPicker(slug),
+    getMapCodesHistory(slug),
   ]);
 
   const stages = {
@@ -83,6 +89,7 @@ async function PipelineData({ slug }: { slug: string }) {
       libraryStats={libraryStats}
       codeCategories={codeCategories}
       unmappedCodePicker={unmappedCodePicker}
+      mapCodesHistory={mapCodesHistory}
     />
   );
 }

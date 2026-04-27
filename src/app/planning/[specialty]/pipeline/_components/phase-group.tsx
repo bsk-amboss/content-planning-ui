@@ -30,24 +30,10 @@ export function PhaseGroup({
           padding: 0,
           cursor: 'pointer',
           textAlign: 'left',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
           font: 'inherit',
           color: 'inherit',
         }}
       >
-        <span
-          aria-hidden
-          style={{
-            display: 'inline-block',
-            width: 20,
-            fontSize: 20,
-            lineHeight: 1,
-          }}
-        >
-          {open ? '▾' : '▸'}
-        </span>
         <H3>{title}</H3>
       </button>
       {open ? children : null}
