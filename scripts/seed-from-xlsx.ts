@@ -1,41 +1,28 @@
 /**
- * Seed Postgres from local xlsx fixtures.
+ * Seed Postgres ontology tables (ICD-10, HCUP, ABIM, Orpha) from xlsx fixtures.
  *
- * Reads the same fixture registry the repositories layer uses, parses every tab
- * via the existing xlsx repos, and writes rows into Neon via Drizzle. Idempotent
- * per specialty: rows are deleted + re-inserted.
+ * Editor data (codes/articles/sections/categories) lives in Convex now and is
+ * seeded via `pnpm seed:convex`. The only reason this script still exists is to
+ * populate the read-only ontology tables and keep the `specialties` row in
+ * Postgres (it's the FK target for `pipeline_runs` and the ontology tables).
  *
- * Run with: npm run db:seed
+ * Run with: pnpm db:seed
+ *
+ * Phase 2 of the Postgres-drop migration moves ontology to Convex; this script
+ * is retired then.
  */
 
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import {
-  abimToRow,
-  articleSuggestionToRow,
-  codeCategoryToRow,
-  codeToRow,
-  consolidatedArticleToRow,
-  consolidatedSectionToRow,
-  icdToRow,
-  orphaToRow,
-  statsToRow,
-} from '@/lib/db/mappers';
+import { abimToRow, icdToRow, orphaToRow } from '@/lib/db/mappers';
 import {
   abimCodes,
-  articleUpdateSuggestions,
-  codeCategories,
-  codes,
-  consolidatedArticles,
-  consolidatedSections,
   hcupCodes,
   icd10Codes,
-  newArticleSuggestions,
   orphaCodes,
   specialties as specialtiesTable,
-  specialtyStats,
 } from '@/lib/db/schema';
 import { createXlsxRepos } from '@/lib/repositories/xlsx/repos';
 
@@ -89,8 +76,6 @@ async function main() {
       `\n→ Seeding "${fx.slug}" from ${path.relative(process.cwd(), fx.xlsxPath)}`,
     );
 
-    // Upsert specialty. Child rows cascade on delete, so we clear them by FK below
-    // rather than deleting the specialty row (which would also drop the FK target).
     await db
       .insert(specialtiesTable)
       .values({
@@ -110,101 +95,18 @@ async function main() {
         },
       });
 
-    // Clear child rows for this specialty.
-    const childTables = [
-      codes,
-      codeCategories,
-      consolidatedArticles,
-      consolidatedSections,
-      newArticleSuggestions,
-      articleUpdateSuggestions,
-      icd10Codes,
-      hcupCodes,
-      abimCodes,
-      orphaCodes,
-    ] as const;
-    for (const t of childTables) {
+    for (const t of [icd10Codes, hcupCodes, abimCodes, orphaCodes] as const) {
       await db.delete(t).where(eq(t.specialtySlug, fx.slug));
     }
-    await db.delete(specialtyStats).where(eq(specialtyStats.specialtySlug, fx.slug));
 
-    // --- Fetch + map + insert -------------------------------------------------
-    const [
-      codeList,
-      catList,
-      consArticles,
-      consSections,
-      newArticles,
-      updateArticles,
-      icd10,
-      hcup,
-      abim,
-      orpha,
-      stats,
-    ] = await Promise.all([
-      xlsxRepos.codes.list(fx.slug),
-      xlsxRepos.categories.list(fx.slug),
-      xlsxRepos.articles.listConsolidated(fx.slug),
-      xlsxRepos.sections.listConsolidated(fx.slug),
-      xlsxRepos.articles.listNew(fx.slug),
-      xlsxRepos.articles.listUpdates(fx.slug),
+    const [icd10, hcup, abim, orpha] = await Promise.all([
       xlsxRepos.sources.icd10(fx.slug),
       xlsxRepos.sources.hcup(fx.slug),
       xlsxRepos.sources.abim(fx.slug),
       xlsxRepos.sources.orpha(fx.slug),
-      xlsxRepos.stats.get(fx.slug),
     ]);
 
     const results: Array<[string, number]> = [];
-
-    if (codeList.length) {
-      await insertInBatches(
-        codeList.map((c) => codeToRow(c, fx.slug)),
-        (chunk) => db.insert(codes).values(chunk),
-      );
-      results.push(['codes', codeList.length]);
-    }
-
-    if (catList.length) {
-      await insertInBatches(
-        catList.map((c) => codeCategoryToRow(c, fx.slug)),
-        (chunk) => db.insert(codeCategories).values(chunk),
-      );
-      results.push(['code_categories', catList.length]);
-    }
-
-    if (consArticles.length) {
-      await insertInBatches(
-        consArticles.map((a) => consolidatedArticleToRow(a, fx.slug)),
-        (chunk) => db.insert(consolidatedArticles).values(chunk),
-      );
-      results.push(['consolidated_articles', consArticles.length]);
-    }
-
-    if (consSections.length) {
-      await insertInBatches(
-        consSections.map((s) => consolidatedSectionToRow(s, fx.slug)),
-        (chunk) => db.insert(consolidatedSections).values(chunk),
-      );
-      results.push(['consolidated_sections', consSections.length]);
-    }
-
-    if (newArticles.length) {
-      await insertInBatches(
-        newArticles.map((a) => articleSuggestionToRow(a, fx.slug)),
-        (chunk) => db.insert(newArticleSuggestions).values(chunk),
-      );
-      results.push(['new_article_suggestions', newArticles.length]);
-    }
-
-    if (updateArticles.length) {
-      await insertInBatches(
-        updateArticles.map((a) => articleSuggestionToRow(a, fx.slug)),
-        (chunk) => db.insert(articleUpdateSuggestions).values(chunk),
-      );
-      results.push(['article_update_suggestions', updateArticles.length]);
-    }
-
     if (icd10.length) {
       await insertInBatches(
         icd10.map((c) => icdToRow(c, fx.slug, icd10Codes)),
@@ -212,7 +114,6 @@ async function main() {
       );
       results.push(['icd10_codes', icd10.length]);
     }
-
     if (hcup.length) {
       await insertInBatches(
         hcup.map((c) => icdToRow(c, fx.slug, hcupCodes)),
@@ -220,7 +121,6 @@ async function main() {
       );
       results.push(['hcup_codes', hcup.length]);
     }
-
     if (abim.length) {
       await insertInBatches(
         abim.map((c) => abimToRow(c, fx.slug)),
@@ -228,7 +128,6 @@ async function main() {
       );
       results.push(['abim_codes', abim.length]);
     }
-
     if (orpha.length) {
       await insertInBatches(
         orpha.map((c) => orphaToRow(c, fx.slug)),
@@ -236,8 +135,6 @@ async function main() {
       );
       results.push(['orpha_codes', orpha.length]);
     }
-
-    await db.insert(specialtyStats).values(statsToRow(stats, fx.slug));
 
     for (const [name, count] of results) {
       console.log(`   ${name.padEnd(32)} ${count.toLocaleString()}`);

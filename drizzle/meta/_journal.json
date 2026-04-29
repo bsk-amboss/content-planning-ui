@@ -92,6 +92,13 @@
       "when": 1777365000001,
       "tag": "0012_chilly_the_santerians",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1777488913245,
+      "tag": "0013_cloudy_ultragirl",
+      "breakpoints": true
     }
   ]
 }

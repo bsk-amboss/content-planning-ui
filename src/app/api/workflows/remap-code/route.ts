@@ -16,21 +16,18 @@
  * specifically for re-mapping an already-mapped row.
  */
 
-import { and, eq } from 'drizzle-orm';
+import { fetchQuery } from 'convex/nextjs';
+import { eq } from 'drizzle-orm';
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
 import { start } from 'workflow/api';
 import { getConsolidationLockState } from '@/lib/data/codes';
 import { getDb } from '@/lib/db';
-import {
-  codes as codesTable,
-  pipelineRuns,
-  pipelineStages,
-  specialties,
-} from '@/lib/db/schema';
+import { pipelineRuns, pipelineStages, specialties } from '@/lib/db/schema';
 import { approvalToken } from '@/lib/workflows/lib/approval';
 import { clearMappingForCode } from '@/lib/workflows/lib/db-writes';
 import { mapCodesWorkflow } from '@/lib/workflows/mapping/map-codes';
+import { api } from '../../../../../convex/_generated/api';
 
 type Body = {
   specialtySlug?: string;
@@ -70,10 +67,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `specialty not found: ${slug}` }, { status: 404 });
   }
 
-  const [existing] = await db
-    .select({ code: codesTable.code })
-    .from(codesTable)
-    .where(and(eq(codesTable.specialtySlug, slug), eq(codesTable.code, code)));
+  const existing = await fetchQuery(api.codes.get, { slug, code });
   if (!existing) {
     return NextResponse.json({ error: `code not found: ${code}` }, { status: 404 });
   }

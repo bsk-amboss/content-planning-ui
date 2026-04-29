@@ -1,14 +1,6 @@
 import { parseRows } from '../common/parse';
 import { TAB } from '../common/tab-names';
-import type {
-  ArticleRepo,
-  CodeCategoryRepo,
-  CodeRepo,
-  SectionRepo,
-  SourceOntologyRepo,
-  SpecialtyRepo,
-  StatsRepo,
-} from '../interfaces';
+import type { SourceOntologyRepo, SpecialtyRepo } from '../interfaces';
 import {
   AbimCodeSchema,
   ArticleUpdateSuggestionSchema,
@@ -52,8 +44,8 @@ export function createSheetsRepos(registry: Registry[]) {
     },
   };
 
-  const codes: CodeRepo = {
-    async list(slug) {
+  const codes = {
+    async list(slug: string) {
       const id = sheetIdFor(registry, slug);
       if (!id) return [];
       const rows = await readTabRows(id, TAB.CodeAmbossMapping);
@@ -61,8 +53,8 @@ export function createSheetsRepos(registry: Registry[]) {
     },
   };
 
-  const categories: CodeCategoryRepo = {
-    async list(slug) {
+  const categories = {
+    async list(slug: string) {
       const id = sheetIdFor(registry, slug);
       if (!id) return [];
       const rows = await readTabRows(id, TAB.CodeCategories);
@@ -70,8 +62,8 @@ export function createSheetsRepos(registry: Registry[]) {
     },
   };
 
-  const articles: ArticleRepo = {
-    async listConsolidated(slug) {
+  const articles = {
+    async listConsolidated(slug: string) {
       const id = sheetIdFor(registry, slug);
       if (!id) return [];
       const rows = await readTabRows(id, TAB.ConsolidatedArticles);
@@ -79,7 +71,7 @@ export function createSheetsRepos(registry: Registry[]) {
         tabName: TAB.ConsolidatedArticles,
       }).items;
     },
-    async listNew(slug) {
+    async listNew(slug: string) {
       const id = sheetIdFor(registry, slug);
       if (!id) return [];
       const rows = await readTabRows(id, TAB.NewArticleSuggestions);
@@ -87,7 +79,7 @@ export function createSheetsRepos(registry: Registry[]) {
         tabName: TAB.NewArticleSuggestions,
       }).items;
     },
-    async listUpdates(slug) {
+    async listUpdates(slug: string) {
       const id = sheetIdFor(registry, slug);
       if (!id) return [];
       const rows = await readTabRows(id, TAB.ArticleUpdateSuggestions);
@@ -97,8 +89,8 @@ export function createSheetsRepos(registry: Registry[]) {
     },
   };
 
-  const sections: SectionRepo = {
-    async listConsolidated(slug) {
+  const sections = {
+    async listConsolidated(slug: string) {
       const id = sheetIdFor(registry, slug);
       if (!id) return [];
       const rows = await readTabRows(id, TAB.ConsolidatedSections);
@@ -138,8 +130,8 @@ export function createSheetsRepos(registry: Registry[]) {
     },
   };
 
-  const stats: StatsRepo = {
-    async get(slug) {
+  const stats = {
+    async get(slug: string) {
       const id = sheetIdFor(registry, slug);
       if (!id) return {};
       const rows = await readTabRows(id, TAB.Stats);

@@ -17,15 +17,17 @@
  * stage, and starts the workflow.
  */
 
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { fetchQuery } from 'convex/nextjs';
+import { eq } from 'drizzle-orm';
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
 import { start } from 'workflow/api';
 import { getDb } from '@/lib/db';
-import { codes, pipelineRuns, pipelineStages, specialties } from '@/lib/db/schema';
+import { pipelineRuns, pipelineStages, specialties } from '@/lib/db/schema';
 import { approvalToken } from '@/lib/workflows/lib/approval';
 import type { MappingFilter } from '@/lib/workflows/lib/db-writes';
 import { mapCodesWorkflow } from '@/lib/workflows/mapping/map-codes';
+import { api } from '../../../../../convex/_generated/api';
 
 type Body = {
   specialtySlug?: string;
@@ -57,23 +59,12 @@ async function countUnmappedWithFilter(
   slug: string,
   filter: MappingFilter | null,
 ): Promise<number> {
-  const db = getDb();
-  const conditions = [eq(codes.specialtySlug, slug), isNull(codes.isInAmboss)];
-  const cats = filter?.categories ?? [];
-  const ids = filter?.codes ?? [];
-  if (cats.length > 0 && ids.length > 0) {
-    const clause = or(inArray(codes.category, cats), inArray(codes.code, ids));
-    if (clause) conditions.push(clause);
-  } else if (cats.length > 0) {
-    conditions.push(inArray(codes.category, cats));
-  } else if (ids.length > 0) {
-    conditions.push(inArray(codes.code, ids));
-  }
-  const [row] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(codes)
-    .where(and(...conditions));
-  return row?.n ?? 0;
+  const rows = await fetchQuery(api.codes.listUnmapped, {
+    slug,
+    categories: filter?.categories ?? undefined,
+    codes: filter?.codes ?? undefined,
+  });
+  return rows.length;
 }
 
 export async function POST(req: NextRequest) {

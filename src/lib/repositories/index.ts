@@ -35,7 +35,7 @@ function buildSheetsRegistry(): SheetsRegistryEntry[] {
   }));
 }
 
-function buildXlsxRegistry(): XlsxRegistryEntry[] {
+export function buildXlsxRegistry(): XlsxRegistryEntry[] {
   const explicit = Object.entries(env.LOCAL_XLSX_FIXTURES ?? {}).map(
     ([slug, xlsxPath]) => ({
       slug,
@@ -100,15 +100,13 @@ export function getRepositories(): {
 
   let repos: Repositories;
   if (mode === 'postgres') {
-    // Postgres is the sole backend when DATABASE_URL is set. Seeding is required
-    // before data appears; empty lists surface as empty tables in the UI.
     repos = createPostgresRepos();
   } else {
     const sheetsRepos = createSheetsRepos(sheetsRegistry);
     const xlsxRepos = createXlsxRepos(xlsxRegistry);
-    const pick = <K extends keyof Repositories>(key: K, slug: string) => {
+    const pickSources = (slug: string) => {
       const sheetsHas = sheetsRegistry.some((s) => s.slug === slug);
-      return sheetsHas ? sheetsRepos[key] : xlsxRepos[key];
+      return sheetsHas ? sheetsRepos.sources : xlsxRepos.sources;
     };
     repos = {
       specialties: {
@@ -119,23 +117,12 @@ export function getRepositories(): {
           return registrySpecialties.find((s) => s.slug === slug) ?? null;
         },
       },
-      codes: { list: (slug) => pick('codes', slug).list(slug) },
-      categories: { list: (slug) => pick('categories', slug).list(slug) },
-      articles: {
-        listConsolidated: (slug) => pick('articles', slug).listConsolidated(slug),
-        listNew: (slug) => pick('articles', slug).listNew(slug),
-        listUpdates: (slug) => pick('articles', slug).listUpdates(slug),
-      },
-      sections: {
-        listConsolidated: (slug) => pick('sections', slug).listConsolidated(slug),
-      },
       sources: {
-        icd10: (slug) => pick('sources', slug).icd10(slug),
-        hcup: (slug) => pick('sources', slug).hcup(slug),
-        abim: (slug) => pick('sources', slug).abim(slug),
-        orpha: (slug) => pick('sources', slug).orpha(slug),
+        icd10: (slug) => pickSources(slug).icd10(slug),
+        hcup: (slug) => pickSources(slug).hcup(slug),
+        abim: (slug) => pickSources(slug).abim(slug),
+        orpha: (slug) => pickSources(slug).orpha(slug),
       },
-      stats: { get: (slug) => pick('stats', slug).get(slug) },
     };
   }
 

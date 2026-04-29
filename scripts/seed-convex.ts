@@ -1,17 +1,18 @@
 /**
- * One-shot seed: copies the editor-facing tables from Postgres into Convex.
- * Run after `npx convex dev` has provisioned the deployment so the env vars
- * and codegen are in place.
+ * One-shot seed: copies the editor-facing tables from xlsx fixtures into
+ * Convex. Reads xlsx directly via the xlsx repository — no Postgres step.
  *
  *   pnpm seed:convex
  *
- * Idempotent: clears each Convex table for the specialty before re-inserting,
- * since this is the bootstrap step (current data is wipeable per the plan).
+ * Idempotent: clears each Convex table for the specialty before re-inserting.
+ *
+ * Milestones (`specialties.milestones`) are NOT seeded here — run
+ * `pnpm db:import-milestones -- <slug> <file>` separately.
  */
 import { ConvexHttpClient } from 'convex/browser';
 import { env } from '@/env';
-import { getDb } from '@/lib/db';
-import { getRepositories } from '@/lib/repositories';
+import { buildXlsxRegistry } from '@/lib/repositories';
+import { createXlsxRepos } from '@/lib/repositories/xlsx/repos';
 import { api } from '../convex/_generated/api';
 
 async function main() {
@@ -21,10 +22,15 @@ async function main() {
     );
   }
 
+  const registry = buildXlsxRegistry();
+  if (registry.length === 0) {
+    throw new Error(
+      'No xlsx fixtures discovered. Drop a `<slug>_mapping.xlsx` at the repo root, or set LOCAL_XLSX_FIXTURES.',
+    );
+  }
+
   const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
-  const { repos } = getRepositories();
-  // Touch the Drizzle client so a missing DATABASE_URL fails fast.
-  void getDb();
+  const repos = createXlsxRepos(registry);
 
   console.log('seeding specialties …');
   const specialties = await repos.specialties.list();
@@ -43,7 +49,6 @@ async function main() {
     const slug = s.slug;
     console.log(`seeding ${slug} …`);
 
-    // Clear-and-reinsert per specialty so re-running the script converges.
     await Promise.all([
       convex.mutation(api.codes.deleteForSpecialty, { slug }),
       convex.mutation(api.categories.deleteForSpecialty, { slug }),
@@ -69,13 +74,9 @@ async function main() {
       repos.sections.listConsolidated(slug),
     ]);
 
-    // The Drizzle types include a few fields we explicitly pre-trimmed from
-    // the Convex schemas (notably `fullJsonOutput`, `metadata`, `index`).
-    // Strip them here so the Convex validator accepts the payload.
-    //
-    // Blob fields with user-content keys (section titles, etc.) need to be
-    // JSON-stringified before insert because Convex requires ASCII-only
-    // field names — see schema.ts comment.
+    // Pre-trim fields the Convex schema doesn't carry (`fullJsonOutput`,
+    // `metadata`, `index`) and stringify blob fields whose nested keys may
+    // contain unicode (Convex requires ASCII-only field names).
     const codeRows = codes.map(
       ({ index: _i, fullJsonOutput: _fj, metadata: _md, ...rest }) =>
         stringifyBlobs(stripUndef(rest), [
@@ -155,8 +156,7 @@ function stringifyBlobs<T extends Record<string, unknown>>(obj: T, fields: strin
 async function chunked<T>(rows: T[], size: number, fn: (chunk: T[]) => Promise<unknown>) {
   for (let i = 0; i < rows.length; i += size) {
     await fn(rows.slice(i, i + size));
-    // Throttle to stay under the free-tier write-rate cap (4 MiB/s). With
-    // chunks of ~25 rows × tens of KB this keeps us comfortably below.
+    // Throttle to stay under the free-tier write-rate cap (4 MiB/s).
     await new Promise((r) => setTimeout(r, 250));
   }
 }

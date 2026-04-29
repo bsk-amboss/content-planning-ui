@@ -1,14 +1,6 @@
 import { parseRows } from '../common/parse';
 import { TAB } from '../common/tab-names';
-import type {
-  ArticleRepo,
-  CodeCategoryRepo,
-  CodeRepo,
-  SectionRepo,
-  SourceOntologyRepo,
-  SpecialtyRepo,
-  StatsRepo,
-} from '../interfaces';
+import type { SourceOntologyRepo, SpecialtyRepo } from '../interfaces';
 import {
   AbimCodeSchema,
   ArticleUpdateSuggestionSchema,
@@ -52,8 +44,8 @@ export function createXlsxRepos(registry: Registry[]) {
     },
   };
 
-  const codes: CodeRepo = {
-    async list(slug) {
+  const codes = {
+    async list(slug: string) {
       const p = pathFor(registry, slug);
       if (!p) return [];
       const rows = await readTabRows(p, TAB.CodeAmbossMapping);
@@ -61,8 +53,8 @@ export function createXlsxRepos(registry: Registry[]) {
     },
   };
 
-  const categories: CodeCategoryRepo = {
-    async list(slug) {
+  const categories = {
+    async list(slug: string) {
       const p = pathFor(registry, slug);
       if (!p) return [];
       const rows = await readTabRows(p, TAB.CodeCategories);
@@ -70,8 +62,8 @@ export function createXlsxRepos(registry: Registry[]) {
     },
   };
 
-  const articles: ArticleRepo = {
-    async listConsolidated(slug) {
+  const articles = {
+    async listConsolidated(slug: string) {
       const p = pathFor(registry, slug);
       if (!p) return [];
       const rows = await readTabRows(p, TAB.ConsolidatedArticles);
@@ -79,7 +71,7 @@ export function createXlsxRepos(registry: Registry[]) {
         tabName: TAB.ConsolidatedArticles,
       }).items;
     },
-    async listNew(slug) {
+    async listNew(slug: string) {
       const p = pathFor(registry, slug);
       if (!p) return [];
       const rows = await readTabRows(p, TAB.NewArticleSuggestions);
@@ -87,7 +79,7 @@ export function createXlsxRepos(registry: Registry[]) {
         tabName: TAB.NewArticleSuggestions,
       }).items;
     },
-    async listUpdates(slug) {
+    async listUpdates(slug: string) {
       const p = pathFor(registry, slug);
       if (!p) return [];
       const rows = await readTabRows(p, TAB.ArticleUpdateSuggestions);
@@ -97,8 +89,8 @@ export function createXlsxRepos(registry: Registry[]) {
     },
   };
 
-  const sections: SectionRepo = {
-    async listConsolidated(slug) {
+  const sections = {
+    async listConsolidated(slug: string) {
       const p = pathFor(registry, slug);
       if (!p) return [];
       const rows = await readTabRows(p, TAB.ConsolidatedSections);
@@ -138,13 +130,12 @@ export function createXlsxRepos(registry: Registry[]) {
     },
   };
 
-  const stats: StatsRepo = {
-    async get(slug) {
+  const stats = {
+    async get(slug: string) {
       const p = pathFor(registry, slug);
       if (!p) return {};
       const rows = await readTabRows(p, TAB.Stats);
       const summary: StatsSummary = { raw: rows.slice(0, 30) as StatsSummary['raw'] };
-      // Stats sheet is freeform; surface a few well-known figures if we can find them.
       for (const row of rows) {
         const label = String(row[0] ?? '').trim();
         if (label === 'Total') summary.totalCodes = Number(row[1]) || undefined;
