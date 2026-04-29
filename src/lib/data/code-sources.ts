@@ -1,39 +1,29 @@
 /**
- * Cached reader + mutators for the `code_sources` registry.
- *
- * The start-run form's source dropdown and the stage-card's "Inputs" rendering
- * both derive labels from this list. Invalidate via `code-sources` tag after
- * create/delete so both surfaces refresh.
+ * Reader + mutators for the `code_sources` registry, Convex-backed.
+ * The start-run form's source dropdown and the stage-card's "Inputs"
+ * rendering both derive labels from this list.
  */
 
-import { asc, eq } from 'drizzle-orm';
-import { cacheLife, cacheTag } from 'next/cache';
-import { getDb } from '@/lib/db';
-import { codeSources } from '@/lib/db/schema';
+import { fetchMutation, fetchQuery } from 'convex/nextjs';
+import { connection } from 'next/server';
+import { api } from '../../../convex/_generated/api';
 
-export type CodeSourceRow = typeof codeSources.$inferSelect;
+export type CodeSourceRow = { slug: string; name: string; createdAt: number };
 
 export async function listCodeSources(): Promise<CodeSourceRow[]> {
-  'use cache';
-  cacheTag('code-sources');
-  cacheLife('minutes');
-  const db = getDb();
-  return db.select().from(codeSources).orderBy(asc(codeSources.name));
+  await connection();
+  const rows = await fetchQuery(api.sources.listCode);
+  return rows.map((r) => ({ slug: r.slug, name: r.name, createdAt: r.createdAt }));
 }
 
 export async function createCodeSource(input: {
   slug: string;
   name: string;
 }): Promise<CodeSourceRow> {
-  const db = getDb();
-  const [row] = await db
-    .insert(codeSources)
-    .values({ slug: input.slug, name: input.name })
-    .returning();
-  return row;
+  await fetchMutation(api.sources.createCode, { slug: input.slug, name: input.name });
+  return { slug: input.slug, name: input.name, createdAt: Date.now() };
 }
 
 export async function deleteCodeSource(slug: string): Promise<void> {
-  const db = getDb();
-  await db.delete(codeSources).where(eq(codeSources.slug, slug));
+  await fetchMutation(api.sources.removeCode, { slug });
 }

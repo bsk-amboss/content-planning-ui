@@ -1,20 +1,24 @@
-import { cacheLife, cacheTag } from 'next/cache';
-import { getRepositories } from '@/lib/repositories';
+import { fetchQuery } from 'convex/nextjs';
+import { connection } from 'next/server';
 import type { OntologySource } from '@/lib/repositories/common/tab-names';
+import { api } from '../../../convex/_generated/api';
 
 export async function listSourceOntology(slug: string, source: OntologySource) {
-  'use cache';
-  cacheTag(`specialty:${slug}`, `sources:${slug}`, `sources:${slug}:${source}`);
-  cacheLife('hours');
-  const { repos } = getRepositories();
+  await connection();
   switch (source) {
     case 'ICD10':
-      return { source, rows: await repos.sources.icd10(slug) } as const;
+      return {
+        source,
+        rows: await fetchQuery(api.ontology.listIcd10, { slug }),
+      } as const;
     case 'HCUP':
-      return { source, rows: await repos.sources.hcup(slug) } as const;
+      return { source, rows: await fetchQuery(api.ontology.listHcup, { slug }) } as const;
     case 'ABIM':
-      return { source, rows: await repos.sources.abim(slug) } as const;
+      return { source, rows: await fetchQuery(api.ontology.listAbim, { slug }) } as const;
     case 'Orpha':
-      return { source, rows: await repos.sources.orpha(slug) } as const;
+      return {
+        source,
+        rows: await fetchQuery(api.ontology.listOrpha, { slug }),
+      } as const;
   }
 }

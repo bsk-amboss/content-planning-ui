@@ -1,11 +1,11 @@
 /**
- * One-shot production wipe. Clears every editor-facing Convex table and the
- * pipeline + legacy editor tables on Postgres for every specialty present.
+ * One-shot production wipe. Clears every Convex table and the remaining
+ * Postgres tables (pipeline state + specialties).
  *
- * Leaves intact:
- *  - Convex: nothing else exists today
- *  - Postgres: the read-only ontology (`icd10`, `hcup`, `abim`, `orpha`) and
- *    the AMBOSS library mirror (`amboss_articles`, `amboss_sections`).
+ * After Phase 2 of the migration, ontology + AMBOSS + sources live in Convex
+ * (handled per-specialty + globally below). Only pipeline_runs / pipeline_
+ * stages / pipeline_events / extracted_codes + specialties remain on Postgres
+ * (Phase 3 moves those too).
  *
  * Usage:
  *   pnpm dotenv -e .env.production.local -- tsx scripts/wipe-prod.ts
@@ -14,13 +14,7 @@ import { ConvexHttpClient } from 'convex/browser';
 import { env } from '@/env';
 import { getDb } from '@/lib/db';
 import {
-  abimCodes,
-  codeSources,
   extractedCodes,
-  hcupCodes,
-  icd10Codes,
-  milestoneSources,
-  orphaCodes,
   pipelineEvents,
   pipelineRuns,
   pipelineStages,
@@ -49,26 +43,35 @@ async function main() {
       convex.mutation(api.articles.deleteNewForSpecialty, { slug }),
       convex.mutation(api.articles.deleteUpdatesForSpecialty, { slug }),
       convex.mutation(api.sections.deleteForSpecialty, { slug }),
+      convex.mutation(api.ontology.clearIcd10ForSpecialty, { slug }),
+      convex.mutation(api.ontology.clearHcupForSpecialty, { slug }),
+      convex.mutation(api.ontology.clearAbimForSpecialty, { slug }),
+      convex.mutation(api.ontology.clearOrphaForSpecialty, { slug }),
     ]);
     await convex.mutation(api.specialties.remove, { slug });
     console.log(`  ✓ ${slug}`);
   }
+  // Global tables (no per-specialty key): wipe via raw SQL-like Convex calls.
+  // Sources + AMBOSS aren't huge — just iterate and delete.
+  for (const r of await convex.query(api.sources.listCode)) {
+    await convex.mutation(api.sources.removeCode, { slug: r.slug });
+  }
+  for (const r of await convex.query(api.sources.listMilestone)) {
+    await convex.mutation(api.sources.removeMilestone, { slug: r.slug });
+  }
+  await convex.mutation(api.amboss.pruneOlderThan, {
+    updatedAt: Number.MAX_SAFE_INTEGER,
+  });
+  console.log('  ✓ sources + amboss cleared');
 
   console.log('▶ wiping Postgres …');
-  // Pipeline state + ontology + sources still live on Postgres in this phase.
-  // Order matters: child tables first because of FKs.
+  // Children first because of FKs.
   await db.delete(pipelineEvents);
   await db.delete(pipelineStages);
   await db.delete(extractedCodes);
   await db.delete(pipelineRuns);
-  await db.delete(icd10Codes);
-  await db.delete(hcupCodes);
-  await db.delete(abimCodes);
-  await db.delete(orphaCodes);
-  await db.delete(codeSources);
-  await db.delete(milestoneSources);
   await db.delete(specialties);
-  console.log('  ✓ pipeline + ontology + sources cleared');
+  console.log('  ✓ pipeline + specialties cleared');
 
   console.log('done.');
 }

@@ -2,7 +2,8 @@
  * Refresh the local AMBOSS article/section catalog used by the mapping
  * workflow to validate cited IDs.
  *
- *   npm run db:refresh-amboss-library -- path/to/export.json
+ *   pnpm db:refresh-amboss-library -- path/to/export.json
+ *   pnpm db:refresh-amboss-library -- path/to/export.json --prune
  *
  * Expected JSON shape (the user's previous BigQuery → JSON export; if the
  * real file differs, adapt this loader):
@@ -12,27 +13,22 @@
  *     "sections": [{"id": "EmW8hN0", "articleId": "TyX6e00", "title": "..."}]
  *   }
  *
- * Upserts are idempotent. Rows missing from the export stay in the DB unless
- * `--prune` is passed, in which case anything not in the current export is
- * deleted. Calls `/api/internal/revalidate` at the end so the cached ID sets
- * pick up the refresh on the next read.
+ * Upserts are idempotent. `--prune` deletes Convex rows whose updatedAt is
+ * older than this run's timestamp (i.e. anything not in the current export).
  */
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { notInArray, sql } from 'drizzle-orm';
-import { getDb } from '../src/lib/db';
-import { ambossArticles, ambossSections } from '../src/lib/db/schema';
+import { ConvexHttpClient } from 'convex/browser';
+import { env } from '@/env';
+import { api } from '../convex/_generated/api';
 
 type RawArticle = { id: string; title: string; contentBase?: string };
 type RawSection = { id: string; articleId: string; title: string };
+type ExportShape = { articles: RawArticle[]; sections: RawSection[] };
 
-type ExportShape = {
-  articles: RawArticle[];
-  sections: RawSection[];
-};
-
-const UPSERT_CHUNK = 500;
+const UPSERT_CHUNK = 200;
+const THROTTLE_MS = 250;
 
 function readExport(path: string): ExportShape {
   const raw = readFileSync(path, 'utf8');
@@ -52,34 +48,10 @@ function readExport(path: string): ExportShape {
   return exp;
 }
 
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
-async function revalidate(): Promise<void> {
-  const base =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : 'http://localhost:3000');
-  try {
-    const res = await fetch(`${base}/api/internal/revalidate`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        tags: ['amboss-library'],
-        secret: process.env.INTERNAL_REVALIDATE_SECRET,
-      }),
-    });
-    if (!res.ok) {
-      console.warn(`[refresh] revalidate returned ${res.status}; cache may be stale`);
-    }
-  } catch (e) {
-    console.warn(
-      `[refresh] revalidate failed: ${e instanceof Error ? e.message : String(e)}`,
-    );
+async function chunked<T>(rows: T[], size: number, fn: (chunk: T[]) => Promise<unknown>) {
+  for (let i = 0; i < rows.length; i += size) {
+    await fn(rows.slice(i, i + size));
+    await new Promise((r) => setTimeout(r, THROTTLE_MS));
   }
 }
 
@@ -89,10 +61,12 @@ async function main() {
   const pathArg = args.find((a) => !a.startsWith('--'));
   if (!pathArg) {
     console.error(
-      'usage: npm run db:refresh-amboss-library -- path/to/export.json [--prune]',
+      'usage: pnpm db:refresh-amboss-library -- path/to/export.json [--prune]',
     );
     process.exit(1);
   }
+  if (!env.NEXT_PUBLIC_CONVEX_URL) throw new Error('NEXT_PUBLIC_CONVEX_URL is not set');
+
   const absPath = resolve(process.cwd(), pathArg);
   console.log(`[refresh] reading ${absPath}`);
   const exp = readExport(absPath);
@@ -100,70 +74,35 @@ async function main() {
     `[refresh] ${exp.articles.length} articles, ${exp.sections.length} sections`,
   );
 
-  const db = getDb();
-  const now = new Date();
+  const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
+  const updatedAt = Date.now();
 
-  // Upsert articles in chunks.
-  for (const batch of chunk(exp.articles, UPSERT_CHUNK)) {
-    await db
-      .insert(ambossArticles)
-      .values(
-        batch.map((a) => ({
-          id: a.id,
-          title: a.title,
-          contentBase: a.contentBase ?? null,
-          updatedAt: now,
-        })),
-      )
-      .onConflictDoUpdate({
-        target: ambossArticles.id,
-        set: {
-          title: sql`excluded.title`,
-          contentBase: sql`excluded.content_base`,
-          updatedAt: now,
-        },
-      });
-  }
-
-  // Upsert sections in chunks.
-  for (const batch of chunk(exp.sections, UPSERT_CHUNK)) {
-    await db
-      .insert(ambossSections)
-      .values(
-        batch.map((s) => ({
-          id: s.id,
-          articleId: s.articleId,
-          title: s.title,
-          updatedAt: now,
-        })),
-      )
-      .onConflictDoUpdate({
-        target: ambossSections.id,
-        set: {
-          articleId: sql`excluded.article_id`,
-          title: sql`excluded.title`,
-          updatedAt: now,
-        },
-      });
-  }
+  await chunked(exp.articles, UPSERT_CHUNK, (chunk) =>
+    convex.mutation(api.amboss.upsertArticles, {
+      rows: chunk.map((a) => ({
+        articleId: a.id,
+        title: a.title,
+        contentBase: a.contentBase,
+      })),
+      updatedAt,
+    }),
+  );
+  await chunked(exp.sections, UPSERT_CHUNK, (chunk) =>
+    convex.mutation(api.amboss.upsertSections, {
+      rows: chunk.map((s) => ({
+        sectionId: s.id,
+        articleId: s.articleId,
+        title: s.title,
+      })),
+      updatedAt,
+    }),
+  );
 
   if (prune) {
-    const keepArticles = new Set(exp.articles.map((a) => a.id));
-    const keepSections = new Set(exp.sections.map((s) => s.id));
-    const deletedSections = await db
-      .delete(ambossSections)
-      .where(notInArray(ambossSections.id, [...keepSections]))
-      .returning({ id: ambossSections.id });
-    const deletedArticles = await db
-      .delete(ambossArticles)
-      .where(notInArray(ambossArticles.id, [...keepArticles]))
-      .returning({ id: ambossArticles.id });
-    console.log(
-      `[refresh] pruned ${deletedArticles.length} articles + ${deletedSections.length} sections`,
-    );
+    const result = await convex.mutation(api.amboss.pruneOlderThan, { updatedAt });
+    console.log(`[refresh] pruned ${result.pruned} stale rows`);
   }
 
-  await revalidate();
   console.log('[refresh] done');
 }
 

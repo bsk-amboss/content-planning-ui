@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { env } from '@/env';
-import { getRepositories } from '@/lib/repositories';
+import { getSpecialtyRegistry } from '@/lib/repositories';
 import { readTabRows as readSheetsTab } from '@/lib/repositories/sheets/client';
 import { readTabRows as readXlsxTab } from '@/lib/repositories/xlsx/client';
 
@@ -18,7 +18,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const { specialties } = getRepositories();
+  const specialties = getSpecialtyRegistry();
   const specialty = specialties.find((s) => s.slug === slug);
   if (!specialty) {
     return NextResponse.json(

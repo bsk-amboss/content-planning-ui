@@ -1,32 +1,25 @@
 /**
- * Seed Postgres ontology tables (ICD-10, HCUP, ABIM, Orpha) from xlsx fixtures.
+ * Seed Convex ontology tables (ICD-10, HCUP, ABIM, Orpha) from xlsx fixtures.
  *
- * Editor data (codes/articles/sections/categories) lives in Convex now and is
- * seeded via `pnpm seed:convex`. The only reason this script still exists is to
- * populate the read-only ontology tables and keep the `specialties` row in
- * Postgres (it's the FK target for `pipeline_runs` and the ontology tables).
+ *   pnpm db:seed
  *
- * Run with: pnpm db:seed
+ * Per-specialty: clears the four ontology tables in Convex, re-inserts in
+ * 100-row chunks (well under the 4 MiB/s free-tier write cap). Uses the same
+ * xlsx repository the editor seed reads from.
  *
- * Phase 2 of the Postgres-drop migration moves ontology to Convex; this script
- * is retired then.
+ * Editor data (codes/articles/sections/categories) lives in Convex and is
+ * seeded via `pnpm seed:convex`. Milestones via `pnpm db:import-milestones`.
  */
 
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { eq } from 'drizzle-orm';
-import { getDb } from '@/lib/db';
-import { abimToRow, icdToRow, orphaToRow } from '@/lib/db/mappers';
-import {
-  abimCodes,
-  hcupCodes,
-  icd10Codes,
-  orphaCodes,
-  specialties as specialtiesTable,
-} from '@/lib/db/schema';
+import { ConvexHttpClient } from 'convex/browser';
+import { env } from '@/env';
 import { createXlsxRepos } from '@/lib/repositories/xlsx/repos';
+import { api } from '../convex/_generated/api';
 
-const BATCH = 300;
+const CHUNK = 100;
+const THROTTLE_MS = 250;
 
 function titleCase(slug: string): string {
   return slug
@@ -51,53 +44,29 @@ function parseFixturesEnv(): Array<{ slug: string; name: string; xlsxPath: strin
   return out;
 }
 
-async function insertInBatches<T>(
-  rows: T[],
-  insert: (chunk: T[]) => Promise<unknown>,
-): Promise<void> {
-  for (let i = 0; i < rows.length; i += BATCH) {
-    const chunk = rows.slice(i, i + BATCH);
-    await insert(chunk);
+async function chunked<T>(rows: T[], size: number, fn: (chunk: T[]) => Promise<unknown>) {
+  for (let i = 0; i < rows.length; i += size) {
+    await fn(rows.slice(i, i + size));
+    await new Promise((r) => setTimeout(r, THROTTLE_MS));
   }
 }
 
 async function main() {
+  if (!env.NEXT_PUBLIC_CONVEX_URL) throw new Error('NEXT_PUBLIC_CONVEX_URL is not set');
+
   const fixtures = parseFixturesEnv();
   if (fixtures.length === 0) {
     console.error('No xlsx fixtures found. Nothing to seed.');
     process.exit(1);
   }
 
-  const db = getDb();
+  const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
   const xlsxRepos = createXlsxRepos(fixtures);
 
   for (const fx of fixtures) {
     console.log(
       `\n→ Seeding "${fx.slug}" from ${path.relative(process.cwd(), fx.xlsxPath)}`,
     );
-
-    await db
-      .insert(specialtiesTable)
-      .values({
-        slug: fx.slug,
-        name: fx.name,
-        source: 'xlsx',
-        xlsxPath: fx.xlsxPath,
-        lastSeededAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: specialtiesTable.slug,
-        set: {
-          name: fx.name,
-          source: 'xlsx',
-          xlsxPath: fx.xlsxPath,
-          lastSeededAt: new Date(),
-        },
-      });
-
-    for (const t of [icd10Codes, hcupCodes, abimCodes, orphaCodes] as const) {
-      await db.delete(t).where(eq(t.specialtySlug, fx.slug));
-    }
 
     const [icd10, hcup, abim, orpha] = await Promise.all([
       xlsxRepos.sources.icd10(fx.slug),
@@ -106,38 +75,64 @@ async function main() {
       xlsxRepos.sources.orpha(fx.slug),
     ]);
 
-    const results: Array<[string, number]> = [];
-    if (icd10.length) {
-      await insertInBatches(
-        icd10.map((c) => icdToRow(c, fx.slug, icd10Codes)),
-        (chunk) => db.insert(icd10Codes).values(chunk),
-      );
-      results.push(['icd10_codes', icd10.length]);
-    }
-    if (hcup.length) {
-      await insertInBatches(
-        hcup.map((c) => icdToRow(c, fx.slug, hcupCodes)),
-        (chunk) => db.insert(hcupCodes).values(chunk),
-      );
-      results.push(['hcup_codes', hcup.length]);
-    }
-    if (abim.length) {
-      await insertInBatches(
-        abim.map((c) => abimToRow(c, fx.slug)),
-        (chunk) => db.insert(abimCodes).values(chunk),
-      );
-      results.push(['abim_codes', abim.length]);
-    }
-    if (orpha.length) {
-      await insertInBatches(
-        orpha.map((c) => orphaToRow(c, fx.slug)),
-        (chunk) => db.insert(orphaCodes).values(chunk),
-      );
-      results.push(['orpha_codes', orpha.length]);
-    }
+    await Promise.all([
+      convex.mutation(api.ontology.clearIcd10ForSpecialty, { slug: fx.slug }),
+      convex.mutation(api.ontology.clearHcupForSpecialty, { slug: fx.slug }),
+      convex.mutation(api.ontology.clearAbimForSpecialty, { slug: fx.slug }),
+      convex.mutation(api.ontology.clearOrphaForSpecialty, { slug: fx.slug }),
+    ]);
 
-    for (const [name, count] of results) {
-      console.log(`   ${name.padEnd(32)} ${count.toLocaleString()}`);
+    if (icd10.length)
+      await chunked(icd10, CHUNK, (chunk) =>
+        convex.mutation(api.ontology.bulkInsertIcd10, { slug: fx.slug, rows: chunk }),
+      );
+    if (hcup.length)
+      await chunked(hcup, CHUNK, (chunk) =>
+        convex.mutation(api.ontology.bulkInsertHcup, { slug: fx.slug, rows: chunk }),
+      );
+    if (abim.length)
+      await chunked(abim, CHUNK, (chunk) =>
+        convex.mutation(api.ontology.bulkInsertAbim, {
+          slug: fx.slug,
+          rows: chunk.map((r) => ({
+            abimIndex: r.Index,
+            primaryCategory: r.primaryCategory,
+            secondaryCategory: r.secondaryCategory,
+            tertiaryCategory: r.tertiaryCategory,
+            disease: r.disease,
+            specialty: r.Specialty,
+            code: r.code,
+            item: r.item,
+            choice: r.choice,
+            category: r.category,
+            count: r.count,
+          })),
+        }),
+      );
+    if (orpha.length)
+      await chunked(orpha, CHUNK, (chunk) =>
+        convex.mutation(api.ontology.bulkInsertOrpha, {
+          slug: fx.slug,
+          rows: chunk.map((r) => ({
+            orphaCode: r.orphaCode,
+            parentOrphaCode: r.parentOrphaCode,
+            specificName: r.specificName,
+            parentCategory: r.parentCategory,
+            orphaTargetFilenamesToInclude: r.orphaTargetFilenamesToInclude,
+            icd10LettersToInclude: r.icd10lettersToInclude,
+            count: r.count,
+          })),
+        }),
+      );
+
+    const counts: Array<[string, number]> = [
+      ['icd10_codes', icd10.length],
+      ['hcup_codes', hcup.length],
+      ['abim_codes', abim.length],
+      ['orpha_codes', orpha.length],
+    ];
+    for (const [name, count] of counts) {
+      if (count > 0) console.log(`   ${name.padEnd(20)} ${count.toLocaleString()}`);
     }
   }
 

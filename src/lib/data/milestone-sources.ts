@@ -1,39 +1,32 @@
 /**
- * Cached reader + mutators for the `milestone_sources` registry.
- *
- * Parallels `code-sources.ts` but under the `milestone-sources` cache tag so
- * the two dropdowns invalidate independently. The start-milestones form and
- * the milestone stage-card rendering both derive labels from this list.
+ * Reader + mutators for the `milestone_sources` registry, Convex-backed.
+ * Parallels `code-sources.ts`. The start-milestones form and the milestone
+ * stage-card rendering both derive labels from this list.
  */
 
-import { asc, eq } from 'drizzle-orm';
-import { cacheLife, cacheTag } from 'next/cache';
-import { getDb } from '@/lib/db';
-import { milestoneSources } from '@/lib/db/schema';
+import { fetchMutation, fetchQuery } from 'convex/nextjs';
+import { connection } from 'next/server';
+import { api } from '../../../convex/_generated/api';
 
-export type MilestoneSourceRow = typeof milestoneSources.$inferSelect;
+export type MilestoneSourceRow = { slug: string; name: string; createdAt: number };
 
 export async function listMilestoneSources(): Promise<MilestoneSourceRow[]> {
-  'use cache';
-  cacheTag('milestone-sources');
-  cacheLife('minutes');
-  const db = getDb();
-  return db.select().from(milestoneSources).orderBy(asc(milestoneSources.name));
+  await connection();
+  const rows = await fetchQuery(api.sources.listMilestone);
+  return rows.map((r) => ({ slug: r.slug, name: r.name, createdAt: r.createdAt }));
 }
 
 export async function createMilestoneSource(input: {
   slug: string;
   name: string;
 }): Promise<MilestoneSourceRow> {
-  const db = getDb();
-  const [row] = await db
-    .insert(milestoneSources)
-    .values({ slug: input.slug, name: input.name })
-    .returning();
-  return row;
+  await fetchMutation(api.sources.createMilestone, {
+    slug: input.slug,
+    name: input.name,
+  });
+  return { slug: input.slug, name: input.name, createdAt: Date.now() };
 }
 
 export async function deleteMilestoneSource(slug: string): Promise<void> {
-  const db = getDb();
-  await db.delete(milestoneSources).where(eq(milestoneSources.slug, slug));
+  await fetchMutation(api.sources.removeMilestone, { slug });
 }

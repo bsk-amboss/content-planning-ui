@@ -1,12 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { env } from '@/env';
-import { hasDatabaseUrl } from '@/lib/db';
-import type { Repositories } from './interfaces';
-import { createPostgresRepos } from './postgres/repos';
-import { createSheetsRepos } from './sheets/repos';
 import type { Specialty } from './types';
-import { createXlsxRepos } from './xlsx/repos';
 
 interface SheetsRegistryEntry {
   slug: string;
@@ -56,12 +51,14 @@ export function buildXlsxRegistry(): XlsxRegistryEntry[] {
   return explicit;
 }
 
-function combineSpecialties(
-  sheets: SheetsRegistryEntry[],
-  xlsx: XlsxRegistryEntry[],
-): Specialty[] {
+/**
+ * Combined specialty registry. Sheets entries take precedence over xlsx ones
+ * with the same slug. Used by the debug route to resolve a slug → upstream
+ * source for tab-schema inspection.
+ */
+export function getSpecialtyRegistry(): Specialty[] {
   const bySlug = new Map<string, Specialty>();
-  for (const x of xlsx) {
+  for (const x of buildXlsxRegistry()) {
     bySlug.set(x.slug, {
       slug: x.slug,
       name: x.name,
@@ -69,8 +66,7 @@ function combineSpecialties(
       xlsxPath: x.xlsxPath,
     });
   }
-  for (const s of sheets) {
-    // Sheets takes precedence when both are registered.
+  for (const s of buildSheetsRegistry()) {
     bySlug.set(s.slug, {
       slug: s.slug,
       name: s.name,
@@ -79,53 +75,4 @@ function combineSpecialties(
     });
   }
   return Array.from(bySlug.values()).sort((a, b) => a.name.localeCompare(b.name));
-}
-
-let cached: { repos: Repositories; specialties: Specialty[]; mode: Mode } | null = null;
-
-type Mode = 'postgres' | 'legacy';
-
-export function getRepositories(): {
-  repos: Repositories;
-  specialties: Specialty[];
-  mode: Mode;
-} {
-  if (cached) return cached;
-
-  const sheetsRegistry = buildSheetsRegistry();
-  const xlsxRegistry = buildXlsxRegistry();
-  const registrySpecialties = combineSpecialties(sheetsRegistry, xlsxRegistry);
-
-  const mode: Mode = hasDatabaseUrl() ? 'postgres' : 'legacy';
-
-  let repos: Repositories;
-  if (mode === 'postgres') {
-    repos = createPostgresRepos();
-  } else {
-    const sheetsRepos = createSheetsRepos(sheetsRegistry);
-    const xlsxRepos = createXlsxRepos(xlsxRegistry);
-    const pickSources = (slug: string) => {
-      const sheetsHas = sheetsRegistry.some((s) => s.slug === slug);
-      return sheetsHas ? sheetsRepos.sources : xlsxRepos.sources;
-    };
-    repos = {
-      specialties: {
-        async list() {
-          return registrySpecialties;
-        },
-        async get(slug) {
-          return registrySpecialties.find((s) => s.slug === slug) ?? null;
-        },
-      },
-      sources: {
-        icd10: (slug) => pickSources(slug).icd10(slug),
-        hcup: (slug) => pickSources(slug).hcup(slug),
-        abim: (slug) => pickSources(slug).abim(slug),
-        orpha: (slug) => pickSources(slug).orpha(slug),
-      },
-    };
-  }
-
-  cached = { repos, specialties: registrySpecialties, mode };
-  return cached;
 }

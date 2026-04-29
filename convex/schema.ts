@@ -1,9 +1,9 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 
-// Reactive store for editor-facing data. Pipeline state, the workflow durability
-// layer, and the read-only ontology tables (icd10/hcup/abim/orpha) stay on
-// Postgres — see src/lib/db/schema.ts.
+// Reactive store for editor-facing data, ontologies, and the AMBOSS library
+// mirror. Pipeline state (pipeline_runs/stages/events/extracted_codes) is the
+// only thing left on Postgres — Phase 3 of the migration moves that too.
 
 // JSON blob columns from Postgres jsonb. Convex requires ASCII-only field
 // names everywhere — but the existing data uses user-content (section
@@ -176,4 +176,79 @@ export default defineSchema({
     .index('by_specialty', ['specialtySlug'])
     .index('by_specialty_code', ['specialtySlug', 'code'])
     .index('by_run', ['runId']),
+
+  // --- Read-only ontologies. Replace + read pattern (refreshed via xlsx
+  //     seed); UI consumes via fetchQuery in src/lib/data/sources.ts.
+  icd10Codes: defineTable({
+    specialtySlug: v.string(),
+    codeCategory: v.optional(v.string()),
+    codeCategoryDescription: v.optional(v.string()),
+    icd10Code: v.optional(v.string()),
+    icd10CodeDescription: v.optional(v.string()),
+  }).index('by_specialty', ['specialtySlug']),
+
+  hcupCodes: defineTable({
+    specialtySlug: v.string(),
+    codeCategory: v.optional(v.string()),
+    codeCategoryDescription: v.optional(v.string()),
+    icd10Code: v.optional(v.string()),
+    icd10CodeDescription: v.optional(v.string()),
+  }).index('by_specialty', ['specialtySlug']),
+
+  abimCodes: defineTable({
+    specialtySlug: v.string(),
+    abimIndex: v.optional(v.string()),
+    primaryCategory: v.optional(v.string()),
+    secondaryCategory: v.optional(v.string()),
+    tertiaryCategory: v.optional(v.string()),
+    disease: v.optional(v.string()),
+    specialty: v.optional(v.string()),
+    code: v.optional(v.string()),
+    item: v.optional(v.string()),
+    choice: v.optional(v.string()),
+    category: v.optional(v.string()),
+    count: v.optional(v.number()),
+  }).index('by_specialty', ['specialtySlug']),
+
+  orphaCodes: defineTable({
+    specialtySlug: v.string(),
+    orphaCode: v.optional(v.string()),
+    parentOrphaCode: v.optional(v.string()),
+    specificName: v.optional(v.string()),
+    parentCategory: v.optional(v.string()),
+    orphaTargetFilenamesToInclude: v.optional(v.string()),
+    icd10LettersToInclude: v.optional(v.string()),
+    count: v.optional(v.number()),
+  }).index('by_specialty', ['specialtySlug']),
+
+  // --- AMBOSS library mirror (for in-workflow ID validation). Refreshed via
+  //     scripts/refresh-amboss-library.ts from a JSON export.
+  ambossArticles: defineTable({
+    articleId: v.string(),
+    title: v.string(),
+    contentBase: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index('by_article_id', ['articleId']),
+
+  ambossSections: defineTable({
+    sectionId: v.string(),
+    articleId: v.string(),
+    title: v.string(),
+    updatedAt: v.number(),
+  })
+    .index('by_section_id', ['sectionId'])
+    .index('by_article', ['articleId']),
+
+  // --- Source dropdowns: code + milestone source registries (small).
+  codeSources: defineTable({
+    slug: v.string(),
+    name: v.string(),
+    createdAt: v.number(),
+  }).index('by_slug', ['slug']),
+
+  milestoneSources: defineTable({
+    slug: v.string(),
+    name: v.string(),
+    createdAt: v.number(),
+  }).index('by_slug', ['slug']),
 });
