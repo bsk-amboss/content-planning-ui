@@ -31,7 +31,9 @@ async function main() {
     console.error(`No specialty found with slug '${slug}'.`);
     process.exit(1);
   }
-  console.log(`✓ Wrote ${text.length.toLocaleString()} chars of milestones to '${slug}'.`);
+  console.log(
+    `✓ Wrote ${text.length.toLocaleString()} chars of milestones to '${slug}'.`,
+  );
 }
 
 main().catch((e) => {

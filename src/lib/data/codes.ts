@@ -1,101 +1,29 @@
-import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
-import { cacheLife, cacheTag } from 'next/cache';
+import { fetchQuery } from 'convex/nextjs';
+import { and, desc, eq, sql } from 'drizzle-orm';
+import { connection } from 'next/server';
+import { hydrateCodes } from '@/lib/convex-blobs';
 import { getDb } from '@/lib/db';
-import { codes, pipelineRuns, pipelineStages } from '@/lib/db/schema';
-import { getRepositories } from '@/lib/repositories';
+import { pipelineRuns, pipelineStages } from '@/lib/db/schema';
+import { api } from '../../../convex/_generated/api';
 
-export async function listCodes(slug: string) {
-  'use cache';
-  cacheTag(`specialty:${slug}`, `codes:${slug}`);
-  cacheLife('minutes');
-  const { repos } = getRepositories();
-  return repos.codes.list(slug);
-}
-
-/**
- * Codes currently being mapped by an active `map_codes` run for this specialty.
- * Used by the codes table to flag in-flight rows with a "Mapping…" indicator
- * and to drive a poll-and-refresh cycle while work is outstanding.
- *
- * Definition: for every map_codes stage in `running` for this specialty, take
- * the run's `mappingFilter` (or all unmapped if null) and return the codes
- * that still have `isInAmboss IS NULL`. Finished codes drop out of the set on
- * the next read because their `isInAmboss` is no longer null, so the polling
- * UI naturally narrows the spinner row-by-row as the workflow progresses.
- *
- * Not cached — the whole point is to surface live progress.
- */
-export async function listInFlightMappings(slug: string): Promise<string[]> {
-  const db = getDb();
-  const activeRuns = await db
-    .select({
-      runId: pipelineRuns.id,
-      filter: pipelineRuns.mappingFilter,
-    })
-    .from(pipelineStages)
-    .innerJoin(pipelineRuns, eq(pipelineStages.runId, pipelineRuns.id))
-    .where(
-      and(
-        eq(pipelineRuns.specialtySlug, slug),
-        eq(pipelineStages.stage, 'map_codes'),
-        eq(pipelineStages.status, 'running'),
-      ),
-    );
-  if (activeRuns.length === 0) return [];
-
-  const out = new Set<string>();
-  for (const run of activeRuns) {
-    const filter = (run.filter ?? null) as {
-      categories?: unknown;
-      codes?: unknown;
-    } | null;
-    const cats = Array.isArray(filter?.categories)
-      ? filter.categories.filter(
-          (s): s is string => typeof s === 'string' && s.length > 0,
-        )
-      : [];
-    const ids = Array.isArray(filter?.codes)
-      ? filter.codes.filter((s): s is string => typeof s === 'string' && s.length > 0)
-      : [];
-    const conditions = [eq(codes.specialtySlug, slug), isNull(codes.isInAmboss)];
-    if (cats.length > 0 && ids.length > 0) {
-      const clause = or(inArray(codes.category, cats), inArray(codes.code, ids));
-      if (clause) conditions.push(clause);
-    } else if (cats.length > 0) {
-      conditions.push(inArray(codes.category, cats));
-    } else if (ids.length > 0) {
-      conditions.push(inArray(codes.code, ids));
-    }
-    const rows = await db
-      .select({ code: codes.code })
-      .from(codes)
-      .where(and(...conditions));
-    for (const r of rows) out.add(r.code);
-  }
-  return [...out];
-}
+// Codes themselves live in Convex now (see `convex/codes.ts`). The pipeline
+// dashboard still needs a couple of derived numbers — the unmapped-count
+// badge, the category dropdown, and the unmapped-code autocomplete — and
+// those reuse the Convex queries via SSR `fetchQuery`.
+//
+// `getConsolidationLockState` stays Postgres-served because pipeline state
+// lives in `pipeline_stages` (Vercel Workflow durability) — the consolidation
+// lock is derived from the most recent `consolidate_primary` stage row.
 
 /**
- * How many codes for this specialty haven't been mapped yet (`is_in_amboss
- * IS NULL`). Drives the "N unmapped codes" label on the mapping CTA.
+ * How many codes for this specialty haven't been mapped yet (`isInAMBOSS`
+ * unset). Drives the "N unmapped codes" label on the mapping CTA.
  */
 export async function listUnmappedCodeCount(slug: string): Promise<number> {
-  'use cache';
-  cacheTag(`codes:${slug}`);
-  cacheLife('minutes');
-  const db = getDb();
-  const [row] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(codes)
-    .where(and(eq(codes.specialtySlug, slug), isNull(codes.isInAmboss)));
-  return row?.n ?? 0;
+  await connection();
+  const rows = await fetchQuery(api.codes.listUnmapped, { slug });
+  return rows.length;
 }
-
-export type CodeCategorySummary = {
-  category: string;
-  total: number;
-  unmapped: number;
-};
 
 export type UnmappedCodePickerRow = {
   code: string;
@@ -106,26 +34,16 @@ export type UnmappedCodePickerRow = {
 /**
  * Every unmapped code for a specialty with enough metadata to populate an
  * autocomplete. The map-codes form uses this to let the user pin a run to a
- * specific code by searching by code ID or description. Cached so repeat
- * page loads don't replay a large `SELECT`.
+ * specific code by searching by code ID or description.
  */
 export async function listUnmappedCodesForPicker(
   slug: string,
 ): Promise<UnmappedCodePickerRow[]> {
-  'use cache';
-  cacheTag(`codes:${slug}`);
-  cacheLife('minutes');
-  const db = getDb();
-  const rows = await db
-    .select({
-      code: codes.code,
-      description: codes.description,
-      category: codes.category,
-    })
-    .from(codes)
-    .where(and(eq(codes.specialtySlug, slug), isNull(codes.isInAmboss)))
-    .orderBy(codes.code);
-  return rows;
+  await connection();
+  const rows = await fetchQuery(api.codes.listUnmapped, { slug });
+  return rows
+    .map((r) => ({ code: r.code, description: r.description, category: r.category }))
+    .sort((a, b) => a.code.localeCompare(b.code));
 }
 
 /**
@@ -136,17 +54,10 @@ export async function listUnmappedCodesForPicker(
  * is in any state other than `pending`/`skipped` — i.e. the run has started,
  * is awaiting approval, succeeded, or failed without being reset. Absent row
  * or `pending`/`skipped` → unlocked.
- *
- * `resetStageCascade('consolidate_primary')` puts the stage back to `pending`
- * and clears downstream tables, which reopens the gate on the next read
- * because `pipeline:${slug}` is already revalidated by the reset endpoint.
  */
 export async function getConsolidationLockState(
   slug: string,
 ): Promise<{ locked: boolean; status: string | null }> {
-  'use cache';
-  cacheTag(`pipeline:${slug}`);
-  cacheLife('seconds');
   const db = getDb();
   const [row] = await db
     .select({ status: pipelineStages.status })
@@ -169,6 +80,12 @@ export async function getConsolidationLockState(
   return { locked, status };
 }
 
+export type CodeCategorySummary = {
+  category: string;
+  total: number;
+  unmapped: number;
+};
+
 /**
  * Per-category code counts for a specialty — used by the Start-mapping form
  * to populate the multi-select dropdown and compute live totals as the user
@@ -176,23 +93,21 @@ export async function getConsolidationLockState(
  * `"(uncategorized)"` label so they remain selectable.
  */
 export async function listCodeCategories(slug: string): Promise<CodeCategorySummary[]> {
-  'use cache';
-  cacheTag(`codes:${slug}`);
-  cacheLife('minutes');
-  const db = getDb();
-  const rows = await db
-    .select({
-      category: sql<string>`COALESCE(${codes.category}, '(uncategorized)')`,
-      total: sql<number>`count(*)::int`,
-      unmapped: sql<number>`count(*) filter (where ${codes.isInAmboss} is null)::int`,
-    })
-    .from(codes)
-    .where(eq(codes.specialtySlug, slug))
-    .groupBy(sql`COALESCE(${codes.category}, '(uncategorized)')`)
-    .orderBy(sql`COALESCE(${codes.category}, '(uncategorized)')`);
-  return rows.map((r) => ({
-    category: r.category,
-    total: r.total,
-    unmapped: r.unmapped,
-  }));
+  await connection();
+  // Fetched from Convex (the `codes` table is reactive there) and aggregated
+  // in JS rather than via SQL. For our row counts (low thousands) this is
+  // cheap; if the table grows by an order of magnitude we'd switch to a
+  // maintained-counter pattern instead.
+  const rows = hydrateCodes(await fetchQuery(api.codes.list, { slug }));
+  const totals = new Map<string, { total: number; unmapped: number }>();
+  for (const r of rows) {
+    const cat = r.category ?? '(uncategorized)';
+    const entry = totals.get(cat) ?? { total: 0, unmapped: 0 };
+    entry.total += 1;
+    if (r.isInAMBOSS === undefined) entry.unmapped += 1;
+    totals.set(cat, entry);
+  }
+  return Array.from(totals.entries())
+    .map(([category, t]) => ({ category, total: t.total, unmapped: t.unmapped }))
+    .sort((a, b) => a.category.localeCompare(b.category));
 }

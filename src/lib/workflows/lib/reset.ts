@@ -6,20 +6,16 @@
  * /api/workflows/reset-stage route.
  */
 
-import { and, eq, isNull, notInArray, sql } from 'drizzle-orm';
+import { fetchMutation } from 'convex/nextjs';
+import { and, eq, notInArray } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
 import {
-  articleUpdateSuggestions,
-  codes as codesTable,
-  consolidatedArticles,
-  consolidatedSections,
   extractedCodes,
-  newArticleSuggestions,
   pipelineEvents,
   pipelineRuns,
   pipelineStages,
-  specialties,
 } from '@/lib/db/schema';
+import { api } from '../../../../convex/_generated/api';
 import type { StageName } from './db-writes';
 
 const DOWNSTREAM: Record<StageName, StageName[]> = {
@@ -44,63 +40,40 @@ async function clearStageData(stage: StageName, specialtySlug: string, runId: st
   const db = getDb();
   switch (stage) {
     case 'extract_codes':
-      // Staging rows for this run + every promoted code for the specialty.
-      // (codes has no run_id today — reset wipes all codes for the specialty.)
+      // Staging rows for this run live in Postgres; promoted codes live in
+      // Convex and are wiped via the cascading delete mutation.
       await db.delete(extractedCodes).where(eq(extractedCodes.runId, runId));
-      await db.delete(codesTable).where(eq(codesTable.specialtySlug, specialtySlug));
+      await fetchMutation(api.codes.deleteForSpecialty, { slug: specialtySlug });
       break;
     case 'extract_milestones':
-      await db
-        .update(specialties)
-        .set({ milestones: null })
-        .where(eq(specialties.slug, specialtySlug));
+      await fetchMutation(api.specialties.updateMilestones, {
+        slug: specialtySlug,
+        milestones: undefined,
+      });
       break;
     case 'map_codes':
-      // Clear only mapping fields on any codes that survived. If extract_codes
-      // was already cascaded, this is a no-op on zero rows.
-      await db
-        .update(codesTable)
-        .set({
-          isInAmboss: null,
-          articlesWhereCoverageIs: null,
-          notes: null,
-          gaps: null,
-          coverageLevel: null,
-          depthOfCoverage: null,
-          existingArticleUpdates: null,
-          newArticlesNeeded: null,
-          improvements: null,
-          fullJsonOutput: null,
-        })
-        .where(
-          and(
-            eq(codesTable.specialtySlug, specialtySlug),
-            // Don't clobber rows that are already unmapped.
-            sql`${codesTable.isInAmboss} IS NOT NULL OR ${codesTable.coverageLevel} IS NOT NULL`,
-          ),
-        );
+      // Bulk-clear the mapping fields on every code in the specialty (the
+      // mutation skips rows that are already unmapped). Also drops any
+      // in-flight markers in the same transaction.
+      await fetchMutation(api.codes.clearAllMappingsForSpecialty, {
+        slug: specialtySlug,
+      });
       break;
     case 'consolidate_primary':
-      await db
-        .delete(newArticleSuggestions)
-        .where(eq(newArticleSuggestions.specialtySlug, specialtySlug));
-      await db
-        .delete(articleUpdateSuggestions)
-        .where(eq(articleUpdateSuggestions.specialtySlug, specialtySlug));
+      await fetchMutation(api.articles.deleteNewForSpecialty, { slug: specialtySlug });
+      await fetchMutation(api.articles.deleteUpdatesForSpecialty, {
+        slug: specialtySlug,
+      });
       break;
     case 'consolidate_articles':
-      await db
-        .delete(consolidatedArticles)
-        .where(eq(consolidatedArticles.specialtySlug, specialtySlug));
+      await fetchMutation(api.articles.deleteConsolidatedForSpecialty, {
+        slug: specialtySlug,
+      });
       break;
     case 'consolidate_sections':
-      await db
-        .delete(consolidatedSections)
-        .where(eq(consolidatedSections.specialtySlug, specialtySlug));
+      await fetchMutation(api.sections.deleteForSpecialty, { slug: specialtySlug });
       break;
   }
-  // Suppress unused-var warning when the schema imports isn't needed in a branch.
-  void isNull;
 }
 
 /**
@@ -165,9 +138,7 @@ export async function resetStageCascade(input: {
  * remap-code) but the user wants to keep the data they have and start a new
  * run on top of it. Returns the count of runs cancelled.
  */
-export async function clearStaleRunsForSpecialty(
-  specialtySlug: string,
-): Promise<number> {
+export async function clearStaleRunsForSpecialty(specialtySlug: string): Promise<number> {
   const db = getDb();
   const result = await db
     .update(pipelineRuns)

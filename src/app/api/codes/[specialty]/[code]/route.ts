@@ -5,16 +5,18 @@
  *   body: { description?, category?, consolidationCategory? }
  *
  * Gated on consolidation state — returns 409 if `consolidate_primary` is in
- * any state other than `pending`/`skipped`. The gate is also enforced in the
- * UI, but re-checked here so a stale tab can't bypass it.
+ * any state other than `pending`/`skipped` (still read from Postgres). The
+ * gate is also enforced in the UI, but re-checked here so a stale tab can't
+ * bypass it.
+ *
+ * Codes themselves live in Convex now; the write goes through `api.codes.patch`
+ * so every connected editor sees the change without polling.
  */
 
-import { and, eq } from 'drizzle-orm';
-import { revalidateTag } from 'next/cache';
+import { fetchMutation } from 'convex/nextjs';
 import { type NextRequest, NextResponse } from 'next/server';
 import { getConsolidationLockState } from '@/lib/data/codes';
-import { getDb } from '@/lib/db';
-import { codes as codesTable } from '@/lib/db/schema';
+import { api } from '../../../../../../convex/_generated/api';
 
 type Body = {
   description?: string | null;
@@ -22,12 +24,14 @@ type Body = {
   consolidationCategory?: string | null;
 };
 
-function cleanOpt(v: unknown): string | null | undefined {
-  if (v === undefined) return undefined;
-  if (v === null) return null;
+function cleanOpt(v: unknown): string | undefined {
+  // Convex patch can't express "clear this field" via the wire, so we treat
+  // `null` and empty strings as no-ops here (the UI doesn't currently expose
+  // a clear action either). Trim whitespace and forward only meaningful
+  // values.
   if (typeof v !== 'string') return undefined;
   const trimmed = v.trim();
-  return trimmed.length === 0 ? null : trimmed;
+  return trimmed.length === 0 ? undefined : trimmed;
 }
 
 export async function PATCH(
@@ -52,38 +56,30 @@ export async function PATCH(
   const description = cleanOpt(body.description);
   const category = cleanOpt(body.category);
   const consolidationCategory = cleanOpt(body.consolidationCategory);
-  const anyField =
-    description !== undefined ||
-    category !== undefined ||
-    consolidationCategory !== undefined;
-  if (!anyField) {
+  const fields: {
+    description?: string;
+    category?: string;
+    consolidationCategory?: string;
+  } = {};
+  if (description !== undefined) fields.description = description;
+  if (category !== undefined) fields.category = category;
+  if (consolidationCategory !== undefined)
+    fields.consolidationCategory = consolidationCategory;
+  if (Object.keys(fields).length === 0) {
     return NextResponse.json({ error: 'no editable fields supplied' }, { status: 400 });
   }
-  console.log('[codes] PATCH', {
-    slug,
-    code: codeId,
-    description,
-    category,
-    consolidationCategory,
-  });
+  console.log('[codes] PATCH', { slug, code: codeId, fields });
 
-  const db = getDb();
-  const result = await db
-    .update(codesTable)
-    .set({
-      ...(description !== undefined ? { description } : {}),
-      ...(category !== undefined ? { category } : {}),
-      ...(consolidationCategory !== undefined ? { consolidationCategory } : {}),
-    })
-    .where(and(eq(codesTable.specialtySlug, slug), eq(codesTable.code, codeId)))
-    .returning({ code: codesTable.code });
-
-  if (result.length === 0) {
-    return NextResponse.json({ error: 'code not found' }, { status: 404 });
+  try {
+    await fetchMutation(api.codes.patch, { slug, code: codeId, fields });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('No code')) {
+      return NextResponse.json({ error: 'code not found' }, { status: 404 });
+    }
+    console.error('[codes] PATCH failed:', e);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
-
-  revalidateTag(`codes:${slug}`, 'max');
-  revalidateTag(`specialty:${slug}`, 'max');
 
   return NextResponse.json({ ok: true });
 }

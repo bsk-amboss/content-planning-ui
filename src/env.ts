@@ -53,8 +53,11 @@ export const env = createEnv({
     ANTHROPIC_API_KEY: optionalString,
     BLOB_READ_WRITE_TOKEN: optionalString,
     INTERNAL_REVALIDATE_SECRET: optionalString,
+    CONVEX_DEPLOYMENT: optionalString,
   },
-  client: {},
+  client: {
+    NEXT_PUBLIC_CONVEX_URL: z.string().url().optional(),
+  },
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,
     GOOGLE_SA_CLIENT_EMAIL: process.env.GOOGLE_SA_CLIENT_EMAIL,
@@ -73,6 +76,8 @@ export const env = createEnv({
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
     BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN,
     INTERNAL_REVALIDATE_SECRET: process.env.INTERNAL_REVALIDATE_SECRET,
+    CONVEX_DEPLOYMENT: process.env.CONVEX_DEPLOYMENT,
+    NEXT_PUBLIC_CONVEX_URL: process.env.NEXT_PUBLIC_CONVEX_URL,
   },
   emptyStringAsUndefined: true,
 });

@@ -22,7 +22,8 @@
     "db:import-milestones": "dotenv -e .env.local -- tsx scripts/import-milestones.ts",
     "db:mark-imported": "dotenv -e .env.local -- tsx scripts/mark-imported.ts",
     "db:refresh-amboss-library": "dotenv -e .env.local -- tsx scripts/refresh-amboss-library.ts",
-    "wf:extract": "dotenv -e .env.local -- tsx scripts/start-extract.ts"
+    "wf:extract": "dotenv -e .env.local -- tsx scripts/start-extract.ts",
+    "seed:convex": "dotenv -e .env.local -- tsx scripts/seed-convex.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.71",
@@ -43,6 +44,7 @@
     "@workflow/ai": "^4.1.2",
     "@workflow/next": "^4.0.5",
     "ai": "^6.0.168",
+    "convex": "^1.36.1",
     "drizzle-orm": "^0.45.2",
     "emotion-theming": "^11.0.0",
     "exceljs": "^4.4.0",
