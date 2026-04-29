@@ -4,17 +4,20 @@
  * All exports are `"use step"` so they retry on transient failure and persist
  * their results to the workflow event log. Workflow functions never touch the
  * DB directly — they call these helpers.
+ *
+ * After the Convex migration: pipeline_runs / pipeline_stages /
+ * pipeline_events / extracted_codes still live in Postgres (Vercel Workflow's
+ * durability layer is intertwined with that schema). Editor-facing rows
+ * (codes, articles, sections, categories, specialty milestones) live in
+ * Convex — those steps call Convex mutations via `fetchMutation` so all
+ * connected clients see updates live.
  */
 
-import { and, eq, inArray, isNull, or } from 'drizzle-orm';
+import { fetchMutation, fetchQuery } from 'convex/nextjs';
+import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/lib/db';
-import {
-  codes as codesTable,
-  extractedCodes,
-  pipelineRuns,
-  pipelineStages,
-  specialties,
-} from '@/lib/db/schema';
+import { extractedCodes, pipelineRuns, pipelineStages } from '@/lib/db/schema';
+import { api } from '../../../../convex/_generated/api';
 import type { MappingOutput } from './amboss-mcp';
 import type { RawExtractedCode } from './gemini';
 
@@ -207,9 +210,11 @@ export async function writeExtractedCodes(
 }
 
 /**
- * Promote approved rows from extracted_codes into the production `codes`
- * table, leaving every mapping-specific column null so the mapping stage can
- * fill them in.
+ * Promote approved rows from extracted_codes (Postgres staging) into the
+ * production `codes` collection in Convex, leaving every mapping-specific
+ * field unset so the mapping stage can fill them in. metadata is dropped on
+ * the way through — the audit confirmed the UI never reads it on the codes
+ * row, and the schema doesn't carry a column for it.
  */
 export async function promoteExtractedCodesToCodes(
   runId: string,
@@ -224,15 +229,19 @@ export async function promoteExtractedCodesToCodes(
     .where(eq(extractedCodes.runId, runId));
   if (staged.length === 0) return { promoted: 0 };
   const rows = staged.map((s) => ({
-    specialtySlug,
     code: s.code,
-    category: s.category,
-    consolidationCategory: s.consolidationCategory,
-    description: s.description,
-    source: s.source,
-    metadata: s.metadata,
+    category: s.category ?? undefined,
+    consolidationCategory: s.consolidationCategory ?? undefined,
+    description: s.description ?? undefined,
+    source: s.source ?? undefined,
   }));
-  await db.insert(codesTable).values(rows);
+  // Chunk to stay under Convex's free-tier write-rate cap (4 MiB/s) the same
+  // way the seed script does.
+  const chunkSize = 25;
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const chunk = rows.slice(i, i + chunkSize);
+    await fetchMutation(api.codes.bulkInsert, { slug: specialtySlug, rows: chunk });
+  }
   console.log('[pipeline] promoteExtractedCodesToCodes → promoted', rows.length);
   return { promoted: rows.length };
 }
@@ -248,11 +257,11 @@ export async function writeApprovedMilestones(
     specialtySlug,
     chars: milestones.length,
   });
-  const db = getDb();
-  await db
-    .update(specialties)
-    .set({ milestones })
-    .where(eq(specialties.slug, specialtySlug));
+  await fetchMutation(api.specialties.updateMilestones, {
+    slug: specialtySlug,
+    milestones,
+    bumpSeedTimestamp: true,
+  });
 }
 
 export type SpecialtyMappingContext = {
@@ -271,16 +280,7 @@ export async function loadSpecialtyForMapping(
 ): Promise<SpecialtyMappingContext> {
   'use step';
   console.log('[pipeline] loadSpecialtyForMapping', { specialtySlug });
-  const db = getDb();
-  const [row] = await db
-    .select({
-      region: specialties.region,
-      language: specialties.language,
-      milestones: specialties.milestones,
-    })
-    .from(specialties)
-    .where(eq(specialties.slug, specialtySlug))
-    .limit(1);
+  const row = await fetchQuery(api.specialties.get, { slug: specialtySlug });
   return {
     region: row?.region ?? null,
     language: row?.language ?? null,
@@ -307,7 +307,7 @@ export type MappingFilter = {
 
 /**
  * All rows for a specialty that the mapping workflow hasn't touched yet
- * (`isInAmboss IS NULL`), optionally narrowed to specific categories or
+ * (`isInAMBOSS` unset), optionally narrowed to specific categories or
  * individual codes. Kept in its own step so the mapping workflow's initial
  * load replays from the event log on crash instead of re-querying.
  */
@@ -317,40 +317,11 @@ export async function listUnmappedCodes(
 ): Promise<UnmappedCodeRow[]> {
   'use step';
   console.log('[pipeline] listUnmappedCodes', { specialtySlug, filter });
-  const db = getDb();
-  const catList = filter?.categories?.filter(
-    (s) => typeof s === 'string' && s.length > 0,
-  );
-  const codeList = filter?.codes?.filter((s) => typeof s === 'string' && s.length > 0);
-  const hasCat = Boolean(catList && catList.length > 0);
-  const hasCode = Boolean(codeList && codeList.length > 0);
-  const conditions = [
-    eq(codesTable.specialtySlug, specialtySlug),
-    isNull(codesTable.isInAmboss),
-  ];
-  // Use `inArray` (→ `IN (?, ?, ?)` with one bind per value) instead of
-  // `ANY($n)`. The neon-serverless / Drizzle pairing passes arrays to `ANY`
-  // incorrectly — values with embedded commas get split at the wire layer,
-  // which blows up on category strings like "Abuse, Neglect, and ...".
-  if (hasCat && hasCode && catList && codeList) {
-    const clause = or(
-      inArray(codesTable.category, catList),
-      inArray(codesTable.code, codeList),
-    );
-    if (clause) conditions.push(clause);
-  } else if (hasCat && catList) {
-    conditions.push(inArray(codesTable.category, catList));
-  } else if (hasCode && codeList) {
-    conditions.push(inArray(codesTable.code, codeList));
-  }
-  const rows = await db
-    .select({
-      code: codesTable.code,
-      category: codesTable.category,
-      description: codesTable.description,
-    })
-    .from(codesTable)
-    .where(and(...conditions));
+  const rows = await fetchQuery(api.codes.listUnmapped, {
+    slug: specialtySlug,
+    categories: filter?.categories?.filter((s) => typeof s === 'string' && s.length > 0),
+    codes: filter?.codes?.filter((s) => typeof s === 'string' && s.length > 0),
+  });
   console.log('[pipeline] listUnmappedCodes →', rows.length);
   return rows;
 }
@@ -358,7 +329,16 @@ export async function listUnmappedCodes(
 /**
  * Write-through of a single mapping into the canonical `codes` row. Called
  * per-code from the mapping workflow immediately after the agent returns, so
- * the Codes tab reflects progress live.
+ * the Codes tab reflects progress live across all editors via Convex's
+ * reactive queries. The mutation also clears the in-flight marker for this
+ * code in the same transaction.
+ *
+ * Blob-shaped fields (covered sections, section updates, new article
+ * suggestions) are JSON-stringified before passing — the Convex schema
+ * stores them as strings to dodge the ASCII-only field-name restriction
+ * since the existing payloads use unicode-bearing strings as JSON keys
+ * (e.g. section titles like "Vitamin B₁₂"). Read-side query handlers
+ * JSON.parse them back, so UI consumers don't see the wire format.
  */
 export async function writeCodeMapping(
   specialtySlug: string,
@@ -367,56 +347,75 @@ export async function writeCodeMapping(
 ): Promise<void> {
   'use step';
   console.log('[pipeline] writeCodeMapping', { specialtySlug, code });
-  const db = getDb();
   const coverageScore =
     typeof mapping.coverage.coverageScore === 'number'
       ? mapping.coverage.coverageScore
       : typeof mapping.coverage.coverageScore === 'string'
-        ? Number.parseInt(mapping.coverage.coverageScore, 10) || null
-        : null;
-  await db
-    .update(codesTable)
-    .set({
-      isInAmboss: mapping.coverage.inAMBOSS ?? null,
-      articlesWhereCoverageIs: mapping.coverage.coveredSections ?? null,
-      notes: mapping.coverage.generalNotes || null,
-      gaps: mapping.coverage.gaps || null,
-      coverageLevel: mapping.coverage.coverageLevel || null,
-      depthOfCoverage: coverageScore,
-      existingArticleUpdates: mapping.suggestion.sectionUpdates ?? null,
-      newArticlesNeeded: mapping.suggestion.newArticlesNeeded ?? null,
-      improvements: mapping.suggestion.improvement || null,
-      metadata: mapping.currentAMBOSSContentMetadata ?? null,
-      fullJsonOutput: mapping as unknown as Record<string, unknown>,
-    })
-    .where(and(eq(codesTable.specialtySlug, specialtySlug), eq(codesTable.code, code)));
+        ? Number.parseInt(mapping.coverage.coverageScore, 10) || undefined
+        : undefined;
+  await fetchMutation(api.codes.writeMapping, {
+    slug: specialtySlug,
+    code,
+    isInAMBOSS: mapping.coverage.inAMBOSS ?? undefined,
+    coverageLevel: mapping.coverage.coverageLevel || undefined,
+    depthOfCoverage: coverageScore,
+    notes: mapping.coverage.generalNotes || undefined,
+    gaps: mapping.coverage.gaps || undefined,
+    improvements: mapping.suggestion.improvement || undefined,
+    articlesWhereCoverageIs: mapping.coverage.coveredSections
+      ? JSON.stringify(mapping.coverage.coveredSections)
+      : undefined,
+    existingArticleUpdates: mapping.suggestion.sectionUpdates
+      ? JSON.stringify(mapping.suggestion.sectionUpdates)
+      : undefined,
+    newArticlesNeeded: mapping.suggestion.newArticlesNeeded
+      ? JSON.stringify(mapping.suggestion.newArticlesNeeded)
+      : undefined,
+  });
 }
 
 /**
  * Clear mapping-derived fields for a single code so it can be remapped from
- * scratch. Mirrors the per-specialty clear in `reset.ts:58-82` but scoped to
- * one row; used by the per-row "Remap" action in the codes table.
+ * scratch. Mirrors the per-specialty clear in `reset.ts` but scoped to one
+ * row; used by the per-row "Remap" action.
  */
 export async function clearMappingForCode(
   specialtySlug: string,
   code: string,
 ): Promise<void> {
   console.log('[pipeline] clearMappingForCode', { specialtySlug, code });
-  const db = getDb();
-  await db
-    .update(codesTable)
-    .set({
-      isInAmboss: null,
-      articlesWhereCoverageIs: null,
-      notes: null,
-      gaps: null,
-      coverageLevel: null,
-      depthOfCoverage: null,
-      existingArticleUpdates: null,
-      newArticlesNeeded: null,
-      improvements: null,
-      metadata: null,
-      fullJsonOutput: null,
-    })
-    .where(and(eq(codesTable.specialtySlug, specialtySlug), eq(codesTable.code, code)));
+  await fetchMutation(api.codes.clearMapping, { slug: specialtySlug, code });
+}
+
+/**
+ * Mark a batch of codes as in-flight at the start of a map_codes batch.
+ * Drives the live MappingPulse indicator on the codes table — every
+ * connected client sees the pulse appear without polling because the
+ * `inFlight` Convex query is reactive. Each entry is cleared inline by
+ * `writeCodeMapping` once that code finishes.
+ */
+export async function markCodesInFlight(
+  specialtySlug: string,
+  codes: string[],
+  runId: string,
+): Promise<void> {
+  'use step';
+  console.log('[pipeline] markCodesInFlight', {
+    specialtySlug,
+    runId,
+    count: codes.length,
+  });
+  if (codes.length === 0) return;
+  await fetchMutation(api.codes.markInFlight, { slug: specialtySlug, codes, runId });
+}
+
+/**
+ * Drop every in-flight marker for a run — called when the workflow finishes
+ * (success, failure, or cancellation) to make sure no zombie pulses linger
+ * on rows whose batch crashed before `writeCodeMapping` could clear them.
+ */
+export async function clearInFlightForRun(runId: string): Promise<void> {
+  'use step';
+  console.log('[pipeline] clearInFlightForRun', { runId });
+  await fetchMutation(api.codes.clearInFlightForRun, { runId });
 }

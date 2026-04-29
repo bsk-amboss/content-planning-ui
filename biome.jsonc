@@ -11,7 +11,9 @@
       "!**/*.tsbuildinfo",
       "!next-env.d.ts",
       "!src/app/.well-known",
-      "!drizzle"
+      "!drizzle",
+      "!convex/_generated",
+      "!.convex"
     ]
   },
   "formatter": {

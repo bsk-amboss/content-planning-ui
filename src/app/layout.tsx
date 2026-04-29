@@ -2,6 +2,7 @@ import { Analytics } from '@vercel/analytics/next';
 import { SpeedInsights } from '@vercel/speed-insights/next';
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import { ConvexProviders } from './convex-providers';
 import { EmotionRegistry } from './emotion-registry';
 import { NavShell } from './nav-shell';
 import { QueryProviders } from './query-providers';
@@ -43,7 +44,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <EmotionRegistry>
           <QueryProviders>
-            <NavShell>{children}</NavShell>
+            <ConvexProviders>
+              <NavShell>{children}</NavShell>
+            </ConvexProviders>
           </QueryProviders>
         </EmotionRegistry>
         <Analytics />

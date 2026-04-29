@@ -51,25 +51,27 @@ async function main() {
     process.exit(1);
   }
 
-  const codeCount =
-    stages.includes('codes')
-      ? Number(
-          (
-            await db
-              .select({ n: sql<number>`count(*)::int` })
-              .from(codesTable)
-              .where(eq(codesTable.specialtySlug, slug))
-          )[0]?.n ?? 0,
-        )
-      : 0;
-  const milestoneChars =
-    stages.includes('milestones') ? (spec.milestones?.length ?? 0) : 0;
+  const codeCount = stages.includes('codes')
+    ? Number(
+        (
+          await db
+            .select({ n: sql<number>`count(*)::int` })
+            .from(codesTable)
+            .where(eq(codesTable.specialtySlug, slug))
+        )[0]?.n ?? 0,
+      )
+    : 0;
+  const milestoneChars = stages.includes('milestones')
+    ? (spec.milestones?.length ?? 0)
+    : 0;
 
   if (stages.includes('codes') && codeCount === 0) {
     console.warn('[mark-imported] codes stage requested but no codes rows exist.');
   }
   if (stages.includes('milestones') && milestoneChars === 0) {
-    console.warn('[mark-imported] milestones stage requested but specialty has no milestones text.');
+    console.warn(
+      '[mark-imported] milestones stage requested but specialty has no milestones text.',
+    );
   }
 
   const now = new Date();

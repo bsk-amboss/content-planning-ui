@@ -1,10 +1,18 @@
-import { cacheLife, cacheTag } from 'next/cache';
-import { getRepositories } from '@/lib/repositories';
+import { fetchQuery } from 'convex/nextjs';
+import { connection } from 'next/server';
+import type { CodeCategory } from '@/lib/repositories/types';
+import { api } from '../../../convex/_generated/api';
 
-export async function listCategories(slug: string) {
-  'use cache';
-  cacheTag(`specialty:${slug}`, `categories:${slug}`);
-  cacheLife('minutes');
-  const { repos } = getRepositories();
-  return repos.categories.list(slug);
+// Categories live in Convex now (mirrors specialties.ts pattern). Live updates
+// are available to client components via `useQuery(api.categories.list)`; the
+// existing SSR pages keep using this snapshot helper.
+export async function listCategories(slug: string): Promise<CodeCategory[]> {
+  await connection();
+  const rows = await fetchQuery(api.categories.list, { slug });
+  // Strip Convex's `_id` / `_creationTime` so the type matches the legacy
+  // CodeCategory shape consumers expect. JSON-string blob fields aren't on
+  // this table — codeCategories only stores arrays of plain strings.
+  return rows.map(
+    ({ _id: _i, _creationTime: _ct, specialtySlug: _s, ...rest }) => rest as CodeCategory,
+  );
 }

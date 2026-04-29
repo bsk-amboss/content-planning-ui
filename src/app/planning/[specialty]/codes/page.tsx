@@ -1,7 +1,7 @@
-import { dehydrate, HydrationBoundary, QueryClient } from '@tanstack/react-query';
-import { fetchCodesData } from './actions';
+import { preloadQuery } from 'convex/nextjs';
+import { getConsolidationLockState } from '@/lib/data/codes';
+import { api } from '../../../../../convex/_generated/api';
 import { CodesViewClient } from './codes-view-client';
-import { codesQueryKey } from './query-keys';
 
 export default async function CodesPage({
   params,
@@ -10,21 +10,23 @@ export default async function CodesPage({
 }) {
   const { specialty: slug } = await params;
 
-  // Server-side prefetch: run the same fetch that `CodesViewClient`'s
-  // `useQuery` would, then dehydrate the QueryClient state. The
-  // `HydrationBoundary` ships that state to the browser so the client cache
-  // is populated before the table mounts — no client-side round trip needed
-  // on the first visit. Returning the `Promise` instead of awaiting lets the
-  // server stream the rest of the page while the codes query runs.
-  const queryClient = new QueryClient();
-  await queryClient.prefetchQuery({
-    queryKey: codesQueryKey(slug),
-    queryFn: () => fetchCodesData(slug),
-  });
+  // Codes + in-flight markers come from Convex; the consolidation lock still
+  // lives in Postgres pipeline state. Preload all three in parallel so the
+  // first render has every prop ready and the client doesn't wait on a
+  // round trip.
+  const [lock, preloadedCodes, preloadedInFlight] = await Promise.all([
+    getConsolidationLockState(slug),
+    preloadQuery(api.codes.list, { slug }),
+    preloadQuery(api.codes.inFlight, { slug }),
+  ]);
 
   return (
-    <HydrationBoundary state={dehydrate(queryClient)}>
-      <CodesViewClient slug={slug} />
-    </HydrationBoundary>
+    <CodesViewClient
+      slug={slug}
+      canEdit={!lock.locked}
+      lockStatus={lock.status}
+      preloadedCodes={preloadedCodes}
+      preloadedInFlight={preloadedInFlight}
+    />
   );
 }

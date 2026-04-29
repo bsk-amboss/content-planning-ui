@@ -11,9 +11,11 @@
 import { FatalError } from 'workflow';
 import { mapAndValidateCode } from '../lib/amboss-mcp';
 import {
+  clearInFlightForRun,
   listUnmappedCodes,
   loadSpecialtyForMapping,
   type MappingFilter,
+  markCodesInFlight,
   markStageCompleted,
   markStageFailed,
   markStageRunning,
@@ -136,6 +138,11 @@ export async function mapCodesWorkflow(input: MapCodesInput) {
       let escalations = 0;
       let unresolvedCount = 0;
       for (const batch of chunk(unmapped, CODE_CONCURRENCY)) {
+        await markCodesInFlight(
+          input.specialtySlug,
+          batch.map((c) => c.code),
+          input.runId,
+        );
         const results = await Promise.all(
           batch.map((c) =>
             mapAndWriteOne({
@@ -194,13 +201,18 @@ export async function mapCodesWorkflow(input: MapCodesInput) {
       });
     }
 
+    await clearInFlightForRun(input.runId);
     await updatePipelineRunStatus(input.runId, 'completed');
     await revalidateSpecialtyCache(input.specialtySlug);
   } catch (e) {
-    if (e instanceof FatalError) throw e;
+    if (e instanceof FatalError) {
+      await clearInFlightForRun(input.runId);
+      throw e;
+    }
     const msg = e instanceof Error ? e.message : String(e);
     await markStageFailed(input.runId, 'map_codes', msg);
     await updatePipelineRunStatus(input.runId, 'failed', msg);
+    await clearInFlightForRun(input.runId);
     await revalidateSpecialtyCache(input.specialtySlug);
     throw e;
   }
