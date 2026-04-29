@@ -129,3 +129,12 @@ body {
   font-weight: 400;
   line-height: 1.4;
 }
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

@@ -1,9 +1,7 @@
-import { listConsolidatedArticles, listNewArticleSuggestions } from '@/lib/data/articles';
-import { listCategories } from '@/lib/data/categories';
-import { listCodes } from '@/lib/data/codes';
-import { listConsolidatedSections } from '@/lib/data/sections';
+import { Suspense } from 'react';
+import { getOverviewCounts } from '@/lib/data/overview';
 import { getSpecialty } from '@/lib/data/specialties';
-import { getStats } from '@/lib/data/stats';
+import { OverviewSkeleton } from '../_components/overview-skeleton';
 import { OverviewView } from '../_components/overview-view';
 
 export default async function SpecialtyOverview({
@@ -12,34 +10,33 @@ export default async function SpecialtyOverview({
   params: Promise<{ specialty: string }>;
 }) {
   const { specialty: slug } = await params;
+  return (
+    <Suspense fallback={<OverviewSkeleton />}>
+      <OverviewData slug={slug} />
+    </Suspense>
+  );
+}
+
+async function OverviewData({ slug }: { slug: string }) {
   const specialty = await getSpecialty(slug);
   if (!specialty) return null;
 
-  const [codes, categories, articles, newArticles, sections, stats] = await Promise.all([
-    listCodes(slug),
-    listCategories(slug),
-    listConsolidatedArticles(slug),
-    listNewArticleSuggestions(slug),
-    listConsolidatedSections(slug),
-    getStats(slug),
-  ]);
-
-  const mappedCodes = codes.filter((c) => c.coverageLevel !== undefined).length;
+  const counts = await getOverviewCounts(slug);
 
   const statItems = [
-    { label: 'Codes', value: codes.length, hint: `${mappedCodes} mapped` },
-    { label: 'Categories', value: categories.length },
+    { label: 'Codes', value: counts.codes, hint: `${counts.mappedCodes} mapped` },
+    { label: 'Categories', value: counts.categories },
     {
       label: 'Consolidated articles',
-      value: articles.length,
-      hint: `${newArticles.length} new suggestions`,
+      value: counts.consolidatedArticles,
+      hint: `${counts.newArticles} new suggestions`,
     },
-    { label: 'Consolidated sections', value: sections.length },
+    { label: 'Consolidated sections', value: counts.consolidatedSections },
   ];
 
   const note =
-    stats.totalCodes !== undefined
-      ? `Stats tab: total ${stats.totalCodes} · completed mappings ${stats.completedMappings ?? 0}.`
+    counts.totalCodes !== undefined
+      ? `Stats tab: total ${counts.totalCodes} · completed mappings ${counts.completedMappings ?? 0}.`
       : undefined;
 
   return <OverviewView stats={statItems} note={note} />;

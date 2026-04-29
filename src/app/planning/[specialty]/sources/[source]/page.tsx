@@ -1,10 +1,12 @@
 import { notFound } from 'next/navigation';
+import { Suspense } from 'react';
 import { listSourceOntology } from '@/lib/data/sources';
 import {
   ONTOLOGY_SOURCES,
   type OntologySource,
 } from '@/lib/repositories/common/tab-names';
 import { SourcesView } from '../../../_components/sources-view';
+import { TableSkeleton } from '../../../_components/table-skeleton';
 import { SourceTabs } from './source-tabs';
 
 function isOntologySource(v: string): v is OntologySource {
@@ -20,12 +22,17 @@ export default async function SourcePage({
 }) {
   const { specialty: slug, source } = await params;
   if (!isOntologySource(source)) notFound();
-
-  const { rows } = await listSourceOntology(slug, source);
   return (
     <>
       <SourceTabs slug={slug} active={source} />
-      <SourcesView source={source} rows={rows as unknown as Row[]} />
+      <Suspense fallback={<TableSkeleton columns={5} rows={10} />}>
+        <SourceData slug={slug} source={source} />
+      </Suspense>
     </>
   );
+}
+
+async function SourceData({ slug, source }: { slug: string; source: OntologySource }) {
+  const { rows } = await listSourceOntology(slug, source);
+  return <SourcesView source={source} rows={rows as unknown as Row[]} />;
 }
