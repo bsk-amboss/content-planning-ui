@@ -4,6 +4,7 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { EmotionRegistry } from './emotion-registry';
 import { NavShell } from './nav-shell';
+import { QueryProviders } from './query-providers';
 
 export const metadata: Metadata = {
   title: {
@@ -41,7 +42,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <EmotionRegistry>
-          <NavShell>{children}</NavShell>
+          <QueryProviders>
+            <NavShell>{children}</NavShell>
+          </QueryProviders>
         </EmotionRegistry>
         <Analytics />
         <SpeedInsights />

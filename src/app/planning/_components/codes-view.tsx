@@ -1,7 +1,6 @@
 'use client';
 
 import { Badge, Stack, Text } from '@amboss/design-system';
-import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { COVERAGE_LEVELS, type Code } from '@/lib/repositories/types';
 import { CodeDetailModal, type DetailTarget } from './code-detail-modal';
@@ -54,18 +53,11 @@ export function CodesView({
   lockStatus: string | null;
   inFlightCodes: string[];
 }) {
-  const router = useRouter();
   const inFlightSet = useMemo(() => new Set(inFlightCodes), [inFlightCodes]);
 
-  // While any code is being mapped, poll the server every few seconds so rows
-  // pick up their results as the workflow writes them through. The poll stops
-  // automatically when the in-flight set comes back empty (server-driven —
-  // finished codes drop out of `listInFlightMappings`).
-  useEffect(() => {
-    if (inFlightSet.size === 0) return;
-    const id = setInterval(() => router.refresh(), 3000);
-    return () => clearInterval(id);
-  }, [inFlightSet, router]);
+  // Polling for in-flight mappings now lives in `CodesViewClient` via
+  // TanStack Query's `refetchInterval` — the cached query is the source of
+  // truth for codes data, and `router.refresh()` would not update it.
 
   // Mirror the server-loaded codes into local state so inline edits and the
   // Map/Remap action can repaint optimistically before the server round-trip
