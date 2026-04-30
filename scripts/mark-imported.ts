@@ -2,13 +2,9 @@
  * Backfill a synthetic completed pipeline run so the dashboard reflects state
  * imported outside of the workflow (e.g. seed-convex + import-milestones).
  *
- * Inserts one `pipeline_runs` row (status='completed') and one
- * `pipeline_stages` row per stage requested (status='completed',
- * approvedBy='import'). Output summaries record what was imported.
- *
- * Counts are read from Convex (codes count, milestones length) since the
- * editor data lives there post-migration. Pipeline rows still land in
- * Postgres until Phase 3 of the consolidation moves them too.
+ * Inserts one Convex pipelineRuns row + one pipelineStages row per requested
+ * stage (status='completed', approvedBy='import'). Output summaries record
+ * what was imported (codes count, milestones length).
  *
  * Usage:
  *   pnpm db:mark-imported -- anesthesiology codes milestones mapping
@@ -17,8 +13,6 @@
 
 import { ConvexHttpClient } from 'convex/browser';
 import { env } from '@/env';
-import { getDb } from '@/lib/db';
-import { pipelineRuns, pipelineStages } from '@/lib/db/schema';
 import { api } from '../convex/_generated/api';
 
 type Stage = 'codes' | 'milestones' | 'mapping';
@@ -78,18 +72,14 @@ async function main() {
     );
   }
 
-  const db = getDb();
-  const now = new Date();
-  const [run] = await db
-    .insert(pipelineRuns)
-    .values({
-      specialtySlug: slug,
-      status: 'completed',
-      startedAt: now,
-      updatedAt: now,
-      finishedAt: now,
-    })
-    .returning({ id: pipelineRuns.id });
+  const { id: runId } = await convex.mutation(api.pipeline.createRun, {
+    specialtySlug: slug,
+  });
+  const now = Date.now();
+  await convex.mutation(api.pipeline.updateRun, {
+    runId,
+    patch: { status: 'completed', finishedAt: now },
+  });
 
   for (const stage of stages) {
     const stageName = STAGE_NAME[stage];
@@ -99,23 +89,23 @@ async function main() {
         : stage === 'milestones'
           ? { source: 'manual_import', milestones_chars: milestoneChars }
           : { source: 'manual_import', mapped: codeCount };
-    await db.insert(pipelineStages).values({
-      runId: run.id,
+    await convex.mutation(api.pipeline.initStage, { runId, stage: stageName });
+    await convex.mutation(api.pipeline.updateStage, {
+      runId,
       stage: stageName,
-      status: 'completed',
-      startedAt: now,
-      finishedAt: now,
-      approvedAt: now,
-      approvedBy: 'import',
-      outputSummary,
+      patch: {
+        status: 'completed',
+        startedAt: now,
+        finishedAt: now,
+        approvedAt: now,
+        approvedBy: 'import',
+        outputSummary: JSON.stringify(outputSummary),
+      },
     });
   }
 
   console.log(
-    `✓ Backfilled run ${run.id} for '${slug}' — stages: ${stages.map((s) => STAGE_NAME[s]).join(', ')}`,
-  );
-  console.log(
-    `  Now revalidate caches: curl -X POST http://localhost:3000/api/internal/revalidate -H 'content-type: application/json' -d '{"tags":["pipeline:${slug}","specialty-phases","specialties"]}'`,
+    `✓ Backfilled run ${runId} for '${slug}' — stages: ${stages.map((s) => STAGE_NAME[s]).join(', ')}`,
   );
 }
 

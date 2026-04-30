@@ -14,9 +14,10 @@
  * a specialty seeded from xlsx keeps its lineage.
  */
 
-import { getDb } from '@/lib/db';
-import { specialties } from '@/lib/db/schema';
+import { ConvexHttpClient } from 'convex/browser';
+import { env } from '@/env';
 import { readTabRows } from '@/lib/repositories/xlsx/client';
+import { api } from '../convex/_generated/api';
 
 const WORKBOOK = 'board_specialty_mapping_competencies.xlsx';
 const MASTER_TAB = 'master';
@@ -96,7 +97,8 @@ async function readRegionSpecialties(region: string): Promise<SpecialtyRow[]> {
 
 async function main() {
   const filter = new Set(process.argv.slice(2).map((s) => s.toLowerCase()));
-  const db = getDb();
+  if (!env.NEXT_PUBLIC_CONVEX_URL) throw new Error('NEXT_PUBLIC_CONVEX_URL is not set');
+  const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
   const regions = await readRegions();
   console.log('[import] master regions:', [...regions.keys()]);
   if (filter.size > 0) console.log('[import] filter:', [...filter]);
@@ -108,22 +110,13 @@ async function main() {
     if (selected.length === 0) continue;
     console.log(`[import] ${regionKey}: ${selected.length} specialties`);
     for (const s of selected) {
-      await db
-        .insert(specialties)
-        .values({
-          slug: s.slug,
-          name: s.name,
-          source: 'board',
-          region: cfg.region,
-          language: cfg.language,
-        })
-        .onConflictDoUpdate({
-          target: specialties.slug,
-          set: {
-            region: cfg.region,
-            language: cfg.language,
-          },
-        });
+      await convex.mutation(api.specialties.create, {
+        slug: s.slug,
+        name: s.name,
+        source: 'board',
+        region: cfg.region,
+        language: cfg.language,
+      });
       upserts++;
     }
   }

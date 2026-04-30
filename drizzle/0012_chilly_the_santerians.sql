@@ -1,1 +1,0 @@
-ALTER TABLE "extracted_codes" ADD COLUMN "consolidation_category" text;

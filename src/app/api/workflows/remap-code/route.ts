@@ -3,27 +3,13 @@
  *
  * POST /api/workflows/remap-code
  *   body: { specialtySlug, code, contentBase?, language?, checkAgainstLibrary? }
- *
- * Flow:
- *   1. Verify the specialty exists and consolidation is not locked. (A locked
- *      specialty also blocks this endpoint — reset consolidation first.)
- *   2. Clear mapping fields on this one code so the mapping workflow's
- *      `isInAmboss IS NULL` filter picks it up.
- *   3. Create a fresh pipeline_run + map_codes stage row and start the
- *      workflow with `filter.codes = [code]`.
- *
- * Use /api/workflows/map-codes directly for unmapped codes; this endpoint is
- * specifically for re-mapping an already-mapped row.
  */
 
-import { fetchQuery } from 'convex/nextjs';
-import { eq } from 'drizzle-orm';
+import { fetchMutation, fetchQuery } from 'convex/nextjs';
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
 import { start } from 'workflow/api';
 import { getConsolidationLockState } from '@/lib/data/codes';
-import { getDb } from '@/lib/db';
-import { pipelineRuns, pipelineStages, specialties } from '@/lib/db/schema';
 import { approvalToken } from '@/lib/workflows/lib/approval';
 import { clearMappingForCode } from '@/lib/workflows/lib/db-writes';
 import { mapCodesWorkflow } from '@/lib/workflows/mapping/map-codes';
@@ -61,8 +47,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const db = getDb();
-  const [spec] = await db.select().from(specialties).where(eq(specialties.slug, slug));
+  const spec = await fetchQuery(api.specialties.get, { slug });
   if (!spec) {
     return NextResponse.json({ error: `specialty not found: ${slug}` }, { status: 404 });
   }
@@ -72,31 +57,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `code not found: ${code}` }, { status: 404 });
   }
 
-  // Null the mapping fields first so listUnmappedCodes picks the row up.
   await clearMappingForCode(slug, code);
 
   const checkAgainstLibrary = body.checkAgainstLibrary !== false;
   const mappingInstructions = body.additionalInstructions?.trim() || null;
   const filter = { codes: [code] } as const;
 
-  const [run] = await db
-    .insert(pipelineRuns)
-    .values({
-      specialtySlug: slug,
-      status: 'running',
+  const { id: runId } = await fetchMutation(api.pipeline.createRun, {
+    specialtySlug: slug,
+  });
+  await fetchMutation(api.pipeline.updateRun, {
+    runId,
+    patch: {
       mappingInstructions,
       mappingCheckIds: checkAgainstLibrary,
-      mappingFilter: filter,
-    })
-    .returning({ id: pipelineRuns.id });
-
-  await db
-    .insert(pipelineStages)
-    .values({ runId: run.id, stage: 'map_codes', status: 'pending' });
+      mappingFilter: JSON.stringify(filter),
+    },
+  });
+  await fetchMutation(api.pipeline.initStage, { runId, stage: 'map_codes' });
 
   const wfRun = await start(mapCodesWorkflow, [
     {
-      runId: run.id,
+      runId,
       specialtySlug: slug,
       contentBase: body.contentBase?.trim() || undefined,
       language: body.language?.trim() || undefined,
@@ -106,20 +88,20 @@ export async function POST(req: NextRequest) {
     },
   ]);
 
-  await db
-    .update(pipelineRuns)
-    .set({ workflowRunId: wfRun.runId, updatedAt: new Date() })
-    .where(eq(pipelineRuns.id, run.id));
+  await fetchMutation(api.pipeline.updateRun, {
+    runId,
+    patch: { workflowRunId: wfRun.runId },
+  });
 
   revalidateTag(`pipeline:${slug}`, 'max');
   revalidateTag(`codes:${slug}`, 'max');
   revalidateTag('specialty-phases', 'max');
 
   return NextResponse.json({
-    runId: run.id,
+    runId,
     workflowRunId: wfRun.runId,
     specialty: slug,
     code,
-    approvalToken: approvalToken(run.id, 'map_codes'),
+    approvalToken: approvalToken(runId, 'map_codes'),
   });
 }

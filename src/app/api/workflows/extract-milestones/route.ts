@@ -5,23 +5,18 @@
  *   body: {
  *     specialtySlug: string;
  *     inputs: Array<{ source: string; url: string }>;
- *     milestonesInstructions?: string;   // appended to DEFAULT_MILESTONES_SYSTEM_PROMPT
+ *     milestonesInstructions?: string;
  *   }
- *
- * Mirrors `/api/workflows/extract` but scoped to the single-phase milestones
- * extraction that writes a plain-text blob to `specialties.milestones` on
- * approval.
  */
 
-import { eq } from 'drizzle-orm';
+import { fetchMutation, fetchQuery } from 'convex/nextjs';
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
 import { start } from 'workflow/api';
 import { listMilestoneSources } from '@/lib/data/milestone-sources';
-import { getDb } from '@/lib/db';
-import { pipelineRuns, pipelineStages, specialties } from '@/lib/db/schema';
 import { approvalToken } from '@/lib/workflows/lib/approval';
 import { extractMilestonesWorkflow } from '@/lib/workflows/preprocessing/extract-milestones';
+import { api } from '../../../../../convex/_generated/api';
 import { parseContentInputs } from '../_lib/inputs';
 
 type Body = {
@@ -44,50 +39,47 @@ export async function POST(req: NextRequest) {
   }
   const inputs = parsed;
 
-  const db = getDb();
-  const [spec] = await db.select().from(specialties).where(eq(specialties.slug, slug));
+  const spec = await fetchQuery(api.specialties.get, { slug });
   if (!spec) {
     return NextResponse.json({ error: `specialty not found: ${slug}` }, { status: 404 });
   }
 
   const milestonesInstructions = body.milestonesInstructions?.trim() || null;
 
-  const [run] = await db
-    .insert(pipelineRuns)
-    .values({
-      specialtySlug: slug,
-      status: 'running',
-      contentOutlineUrls: inputs,
+  const { id: runId } = await fetchMutation(api.pipeline.createRun, {
+    specialtySlug: slug,
+  });
+  await fetchMutation(api.pipeline.updateRun, {
+    runId,
+    patch: {
+      contentOutlineUrls: JSON.stringify(inputs),
       milestonesInstructions,
-    })
-    .returning({ id: pipelineRuns.id });
-
-  await db
-    .insert(pipelineStages)
-    .values({ runId: run.id, stage: 'extract_milestones', status: 'pending' });
+    },
+  });
+  await fetchMutation(api.pipeline.initStage, { runId, stage: 'extract_milestones' });
 
   const wfRun = await start(extractMilestonesWorkflow, [
     {
-      runId: run.id,
+      runId,
       specialtySlug: slug,
       inputs,
       milestonesInstructions: milestonesInstructions ?? undefined,
     },
   ]);
 
-  await db
-    .update(pipelineRuns)
-    .set({ workflowRunId: wfRun.runId, updatedAt: new Date() })
-    .where(eq(pipelineRuns.id, run.id));
+  await fetchMutation(api.pipeline.updateRun, {
+    runId,
+    patch: { workflowRunId: wfRun.runId },
+  });
 
   revalidateTag(`pipeline:${slug}`, 'max');
   revalidateTag('specialty-phases', 'max');
 
   return NextResponse.json({
-    runId: run.id,
+    runId,
     workflowRunId: wfRun.runId,
     specialty: slug,
     inputs: inputs.length,
-    approvalToken: approvalToken(run.id, 'extract_milestones'),
+    approvalToken: approvalToken(runId, 'extract_milestones'),
   });
 }

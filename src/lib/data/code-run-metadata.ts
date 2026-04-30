@@ -1,20 +1,14 @@
 /**
- * Per-code mapping run metadata loader.
- *
- * Reads `pipeline_events` for the most recent `map_codes` run that touched a
- * specific code, returning per-attempt usage + aggregate totals. Powers the
- * Metadata tab in the code-detail modal.
- *
- * Definition of "most recent": grouped by run id, pick the latest run that has
- * any phase=map event for this code. We can't simply order by event timestamp
- * because a run interleaves attempts with the rest of its specialty's batch —
- * grouping keeps each run's attempts together.
+ * Per-code mapping run metadata loader. Reads `pipelineEvents` from Convex
+ * for the most recent `map_codes` run that touched a specific code, and
+ * returns per-attempt usage + aggregate totals. Powers the Metadata tab in
+ * the code-detail modal.
  */
 
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
-import { getDb } from '@/lib/db';
-import { pipelineEvents, pipelineRuns, pipelineStages } from '@/lib/db/schema';
+import { fetchQuery } from 'convex/nextjs';
+import { connection } from 'next/server';
 import type { EventMetrics } from '@/lib/workflows/lib/events';
+import { api } from '../../../convex/_generated/api';
 
 export type CodeRunAttempt = {
   createdAt: string;
@@ -54,58 +48,12 @@ export async function loadCodeMappingMetadata(
   slug: string,
   code: string,
 ): Promise<CodeRunMetadata | null> {
-  const db = getDb();
+  await connection();
+  const result = await fetchQuery(api.pipeline.getCodeRunMetadata, { slug, code });
+  if (!result) return null;
 
-  // Find the latest run for this specialty that has a phase=map event for the
-  // given code. The `metrics->>'code'` JSON path is indexed only on
-  // (run_id, stage, created_at) — fine because we filter by stage first.
-  const [latest] = await db
-    .select({
-      runId: pipelineEvents.runId,
-      runStartedAt: pipelineRuns.startedAt,
-      runFinishedAt: pipelineRuns.finishedAt,
-    })
-    .from(pipelineEvents)
-    .innerJoin(pipelineRuns, eq(pipelineEvents.runId, pipelineRuns.id))
-    .where(
-      and(
-        eq(pipelineRuns.specialtySlug, slug),
-        eq(pipelineEvents.stage, 'map_codes'),
-        sql`${pipelineEvents.metrics}->>'code' = ${code}`,
-      ),
-    )
-    .orderBy(desc(pipelineRuns.startedAt))
-    .limit(1);
-
-  if (!latest) return null;
-
-  const [stageRow] = await db
-    .select({ status: pipelineStages.status })
-    .from(pipelineStages)
-    .where(
-      and(eq(pipelineStages.runId, latest.runId), eq(pipelineStages.stage, 'map_codes')),
-    )
-    .limit(1);
-
-  const events = await db
-    .select({
-      createdAt: pipelineEvents.createdAt,
-      level: pipelineEvents.level,
-      message: pipelineEvents.message,
-      metrics: pipelineEvents.metrics,
-    })
-    .from(pipelineEvents)
-    .where(
-      and(
-        eq(pipelineEvents.runId, latest.runId),
-        eq(pipelineEvents.stage, 'map_codes'),
-        sql`${pipelineEvents.metrics}->>'code' = ${code}`,
-      ),
-    )
-    .orderBy(asc(pipelineEvents.createdAt));
-
-  const attempts: CodeRunAttempt[] = events.map((e) => {
-    const m = (e.metrics ?? {}) as EventMetrics;
+  const attempts: CodeRunAttempt[] = result.events.map((e) => {
+    const m = (e.metrics ? (JSON.parse(e.metrics) as EventMetrics) : {}) as EventMetrics;
     return {
       createdAt: new Date(e.createdAt).toISOString(),
       level: (e.level as 'info' | 'warn' | 'error') ?? 'info',
@@ -147,8 +95,6 @@ export async function loadCodeMappingMetadata(
         toolCounts.set(name, (toolCounts.get(name) ?? 0) + 1);
       }
     }
-    // finalModel: pick the model from the latest attempt that actually ran a
-    // call (parse/validate failures still log model, so this works).
     if (a.model && a.model !== 'mapper-ladder') finalModel = a.model;
   }
 
@@ -157,12 +103,12 @@ export async function loadCodeMappingMetadata(
     .sort((x, y) => y.count - x.count);
 
   return {
-    runId: latest.runId,
-    runStartedAt: new Date(latest.runStartedAt).toISOString(),
-    runFinishedAt: latest.runFinishedAt
-      ? new Date(latest.runFinishedAt).toISOString()
+    runId: result.run._id,
+    runStartedAt: new Date(result.run.startedAt).toISOString(),
+    runFinishedAt: result.run.finishedAt
+      ? new Date(result.run.finishedAt).toISOString()
       : null,
-    stageStatus: stageRow?.status ?? null,
+    stageStatus: result.stage?.status ?? null,
     finalModel,
     totals: {
       costUsd: anyCost ? costUsd : null,

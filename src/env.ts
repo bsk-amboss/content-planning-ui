@@ -45,8 +45,6 @@ export const env = createEnv({
     GOOGLE_SA_PRIVATE_KEY: optionalString.transform((s) => s?.replace(/\\n/g, '\n')),
     MAPPING_SHEET_IDS: sheetIdsSchema,
     LOCAL_XLSX_FIXTURES: xlsxFixturesSchema,
-    DATABASE_URL: optionalString,
-    DATABASE_URL_UNPOOLED: optionalString,
     AMBOSS_MCP_URL: z.string().url().optional(),
     AMBOSS_MCP_TOKEN: optionalString,
     GOOGLE_GENERATIVE_AI_API_KEY: optionalString,
@@ -64,12 +62,6 @@ export const env = createEnv({
     GOOGLE_SA_PRIVATE_KEY: process.env.GOOGLE_SA_PRIVATE_KEY,
     MAPPING_SHEET_IDS: process.env.MAPPING_SHEET_IDS,
     LOCAL_XLSX_FIXTURES: process.env.LOCAL_XLSX_FIXTURES,
-    // The Vercel Neon integration prefixes everything with STORAGE_. Fall back
-    // to those names so the app works whether the integration uses a prefix
-    // or not.
-    DATABASE_URL: process.env.DATABASE_URL ?? process.env.STORAGE_DATABASE_URL,
-    DATABASE_URL_UNPOOLED:
-      process.env.DATABASE_URL_UNPOOLED ?? process.env.STORAGE_DATABASE_URL_UNPOOLED,
     AMBOSS_MCP_URL: process.env.AMBOSS_MCP_URL,
     AMBOSS_MCP_TOKEN: process.env.AMBOSS_MCP_TOKEN,
     GOOGLE_GENERATIVE_AI_API_KEY: process.env.GOOGLE_GENERATIVE_AI_API_KEY,

@@ -1,9 +1,9 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 
-// Reactive store for editor-facing data, ontologies, and the AMBOSS library
-// mirror. Pipeline state (pipeline_runs/stages/events/extracted_codes) is the
-// only thing left on Postgres — Phase 3 of the migration moves that too.
+// Single-DB Convex setup. Holds editor-facing data, ontologies, AMBOSS
+// library mirror, and pipeline state (post-Phase-3 migration). Postgres is
+// no longer used.
 
 // JSON blob columns from Postgres jsonb. Convex requires ASCII-only field
 // names everywhere — but the existing data uses user-content (section
@@ -251,4 +251,71 @@ export default defineSchema({
     name: v.string(),
     createdAt: v.number(),
   }).index('by_slug', ['slug']),
+
+  // --- Pipeline state. Vercel Workflow durability is managed by the runtime;
+  //     these tables are application-level state the workflow code chooses to
+  //     persist (run history, stage progression, structured event log, and
+  //     the staging table for codes pending approval).
+  //
+  // JSONB-shaped fields are stringified so unicode keys (which AMBOSS section
+  // titles can contain — see schema comment at top) don't break Convex.
+  pipelineRuns: defineTable({
+    specialtySlug: v.string(),
+    status: v.string(),
+    workflowRunId: v.optional(v.string()),
+    startedAt: v.number(),
+    updatedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    contentOutlineUrls: jsonBlobString,
+    identifyModulesInstructions: v.optional(v.string()),
+    extractCodesInstructions: v.optional(v.string()),
+    milestonesInstructions: v.optional(v.string()),
+    mappingInstructions: v.optional(v.string()),
+    mappingCheckIds: v.boolean(),
+    mappingFilter: jsonBlobString,
+  })
+    .index('by_specialty', ['specialtySlug'])
+    .index('by_specialty_started', ['specialtySlug', 'startedAt']),
+
+  pipelineStages: defineTable({
+    runId: v.string(),
+    stage: v.string(),
+    status: v.string(),
+    workflowRunId: v.optional(v.string()),
+    startedAt: v.optional(v.number()),
+    finishedAt: v.optional(v.number()),
+    approvedAt: v.optional(v.number()),
+    approvedBy: v.optional(v.string()),
+    outputSummary: jsonBlobString,
+    draftPayload: jsonBlobString,
+    errorMessage: v.optional(v.string()),
+  })
+    .index('by_run', ['runId'])
+    .index('by_run_stage', ['runId', 'stage']),
+
+  pipelineEvents: defineTable({
+    runId: v.string(),
+    stage: v.string(),
+    level: v.string(),
+    message: v.string(),
+    metrics: jsonBlobString,
+    createdAt: v.number(),
+  })
+    .index('by_run', ['runId'])
+    .index('by_run_stage_created', ['runId', 'stage', 'createdAt']),
+
+  extractedCodes: defineTable({
+    runId: v.string(),
+    specialtySlug: v.string(),
+    code: v.string(),
+    category: v.optional(v.string()),
+    consolidationCategory: v.optional(v.string()),
+    description: v.optional(v.string()),
+    source: v.optional(v.string()),
+    metadata: jsonBlobString,
+    createdAt: v.number(),
+  })
+    .index('by_run', ['runId'])
+    .index('by_specialty', ['specialtySlug']),
 });

@@ -1,22 +1,15 @@
 /**
  * Step functions that own every pipeline write.
  *
- * All exports are `"use step"` so they retry on transient failure and persist
+ * All exports are `'use step'` so they retry on transient failure and persist
  * their results to the workflow event log. Workflow functions never touch the
  * DB directly — they call these helpers.
  *
- * After the Convex migration: pipeline_runs / pipeline_stages /
- * pipeline_events / extracted_codes still live in Postgres (Vercel Workflow's
- * durability layer is intertwined with that schema). Editor-facing rows
- * (codes, articles, sections, categories, specialty milestones) live in
- * Convex — those steps call Convex mutations via `fetchMutation` so all
- * connected clients see updates live.
+ * Single-DB Convex setup: pipeline runs/stages/events/extracted-codes plus
+ * editor data all live in Convex; mutations are invoked via fetchMutation.
  */
 
 import { fetchMutation, fetchQuery } from 'convex/nextjs';
-import { and, eq } from 'drizzle-orm';
-import { getDb } from '@/lib/db';
-import { extractedCodes, pipelineRuns, pipelineStages } from '@/lib/db/schema';
 import { api } from '../../../../convex/_generated/api';
 import type { MappingOutput } from './amboss-mcp';
 import type { RawExtractedCode } from './gemini';
@@ -55,17 +48,12 @@ export async function createPipelineRun(input: {
 }): Promise<{ id: string }> {
   'use step';
   console.log('[pipeline] createPipelineRun', input);
-  const db = getDb();
-  const [row] = await db
-    .insert(pipelineRuns)
-    .values({
-      specialtySlug: input.specialtySlug,
-      workflowRunId: input.workflowRunId ?? null,
-      status: 'running',
-    })
-    .returning({ id: pipelineRuns.id });
-  console.log('[pipeline] createPipelineRun →', row.id);
-  return row;
+  const result = await fetchMutation(api.pipeline.createRun, {
+    specialtySlug: input.specialtySlug,
+    workflowRunId: input.workflowRunId,
+  });
+  console.log('[pipeline] createPipelineRun →', result.id);
+  return { id: result.id };
 }
 
 export async function updatePipelineRunStatus(
@@ -75,18 +63,16 @@ export async function updatePipelineRunStatus(
 ): Promise<void> {
   'use step';
   console.log('[pipeline] updatePipelineRunStatus', { runId, status, error });
-  const db = getDb();
   const terminal =
     status === 'completed' || status === 'failed' || status === 'cancelled';
-  await db
-    .update(pipelineRuns)
-    .set({
+  await fetchMutation(api.pipeline.updateRun, {
+    runId,
+    patch: {
       status,
-      updatedAt: new Date(),
-      ...(terminal ? { finishedAt: new Date() } : {}),
+      ...(terminal ? { finishedAt: Date.now() } : {}),
       ...(error !== undefined ? { error } : {}),
-    })
-    .where(eq(pipelineRuns.id, runId));
+    },
+  });
 }
 
 // --- pipeline_stages ---------------------------------------------------------
@@ -97,12 +83,7 @@ export async function initPipelineStage(
 ): Promise<{ id: string }> {
   'use step';
   console.log('[pipeline] initPipelineStage', { runId, stage });
-  const db = getDb();
-  const [row] = await db
-    .insert(pipelineStages)
-    .values({ runId, stage, status: 'pending' })
-    .returning({ id: pipelineStages.id });
-  return row;
+  return await fetchMutation(api.pipeline.initStage, { runId, stage });
 }
 
 export async function markStageRunning(
@@ -112,15 +93,15 @@ export async function markStageRunning(
 ): Promise<void> {
   'use step';
   console.log('[pipeline] markStageRunning', { runId, stage, workflowRunId });
-  const db = getDb();
-  await db
-    .update(pipelineStages)
-    .set({
+  await fetchMutation(api.pipeline.updateStage, {
+    runId,
+    stage,
+    patch: {
       status: 'running',
-      startedAt: new Date(),
+      startedAt: Date.now(),
       ...(workflowRunId ? { workflowRunId } : {}),
-    })
-    .where(and(eq(pipelineStages.runId, runId), eq(pipelineStages.stage, stage)));
+    },
+  });
 }
 
 export async function markStageAwaitingApproval(
@@ -131,15 +112,17 @@ export async function markStageAwaitingApproval(
 ): Promise<void> {
   'use step';
   console.log('[pipeline] markStageAwaitingApproval', { runId, stage, outputSummary });
-  const db = getDb();
-  await db
-    .update(pipelineStages)
-    .set({
+  await fetchMutation(api.pipeline.updateStage, {
+    runId,
+    stage,
+    patch: {
       status: 'awaiting_approval',
-      outputSummary,
-      ...(draftPayload !== undefined ? { draftPayload } : {}),
-    })
-    .where(and(eq(pipelineStages.runId, runId), eq(pipelineStages.stage, stage)));
+      outputSummary: JSON.stringify(outputSummary),
+      ...(draftPayload !== undefined
+        ? { draftPayload: JSON.stringify(draftPayload) }
+        : {}),
+    },
+  });
 }
 
 export async function markStageCompleted(
@@ -150,16 +133,16 @@ export async function markStageCompleted(
 ): Promise<void> {
   'use step';
   console.log('[pipeline] markStageCompleted', { runId, stage, approvedBy });
-  const db = getDb();
-  await db
-    .update(pipelineStages)
-    .set({
+  await fetchMutation(api.pipeline.updateStage, {
+    runId,
+    stage,
+    patch: {
       status: 'completed',
-      finishedAt: new Date(),
-      ...(approvedBy ? { approvedAt: new Date(), approvedBy } : {}),
-      ...(outputSummary ? { outputSummary } : {}),
-    })
-    .where(and(eq(pipelineStages.runId, runId), eq(pipelineStages.stage, stage)));
+      finishedAt: Date.now(),
+      ...(approvedBy ? { approvedAt: Date.now(), approvedBy } : {}),
+      ...(outputSummary ? { outputSummary: JSON.stringify(outputSummary) } : {}),
+    },
+  });
 }
 
 export async function markStageFailed(
@@ -169,15 +152,15 @@ export async function markStageFailed(
 ): Promise<void> {
   'use step';
   console.log('[pipeline] markStageFailed', { runId, stage, errorMessage });
-  const db = getDb();
-  await db
-    .update(pipelineStages)
-    .set({
+  await fetchMutation(api.pipeline.updateStage, {
+    runId,
+    stage,
+    patch: {
       status: 'failed',
-      finishedAt: new Date(),
+      finishedAt: Date.now(),
       errorMessage,
-    })
-    .where(and(eq(pipelineStages.runId, runId), eq(pipelineStages.stage, stage)));
+    },
+  });
 }
 
 // --- extracted_codes ---------------------------------------------------------
@@ -194,27 +177,31 @@ export async function writeExtractedCodes(
     count: rawCodes.length,
   });
   if (rawCodes.length === 0) return { inserted: 0 };
-  const db = getDb();
   const rows = rawCodes.map((c) => ({
-    runId,
-    specialtySlug,
     code: c.code,
-    category: c.category ?? null,
-    consolidationCategory: c.consolidationCategory ?? null,
-    description: c.description ?? null,
-    source: c.source ?? null,
-    metadata: c.metadata ?? null,
+    category: c.category,
+    consolidationCategory: c.consolidationCategory,
+    description: c.description,
+    source: c.source,
+    metadata: c.metadata !== undefined ? JSON.stringify(c.metadata) : undefined,
   }));
-  await db.insert(extractedCodes).values(rows);
+  // Convex per-mutation write limits — chunk to stay safe.
+  const chunkSize = 50;
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    await fetchMutation(api.pipeline.writeExtractedCodes, {
+      runId,
+      specialtySlug,
+      rows: rows.slice(i, i + chunkSize),
+    });
+  }
   return { inserted: rows.length };
 }
 
 /**
- * Promote approved rows from extracted_codes (Postgres staging) into the
- * production `codes` collection in Convex, leaving every mapping-specific
- * field unset so the mapping stage can fill them in. metadata is dropped on
- * the way through — the audit confirmed the UI never reads it on the codes
- * row, and the schema doesn't carry a column for it.
+ * Promote approved rows from the extracted_codes staging table into the
+ * canonical `codes` collection. Mapping-specific fields stay unset so the
+ * mapping stage can fill them in. metadata is dropped — the codes schema
+ * doesn't carry it.
  */
 export async function promoteExtractedCodesToCodes(
   runId: string,
@@ -222,11 +209,7 @@ export async function promoteExtractedCodesToCodes(
 ): Promise<{ promoted: number }> {
   'use step';
   console.log('[pipeline] promoteExtractedCodesToCodes', { runId, specialtySlug });
-  const db = getDb();
-  const staged = await db
-    .select()
-    .from(extractedCodes)
-    .where(eq(extractedCodes.runId, runId));
+  const staged = await fetchQuery(api.pipeline.listExtractedCodesForRun, { runId });
   if (staged.length === 0) return { promoted: 0 };
   const rows = staged.map((s) => ({
     code: s.code,
@@ -235,8 +218,6 @@ export async function promoteExtractedCodesToCodes(
     description: s.description ?? undefined,
     source: s.source ?? undefined,
   }));
-  // Chunk to stay under Convex's free-tier write-rate cap (4 MiB/s) the same
-  // way the seed script does.
   const chunkSize = 25;
   for (let i = 0; i < rows.length; i += chunkSize) {
     const chunk = rows.slice(i, i + chunkSize);
@@ -271,9 +252,8 @@ export type SpecialtyMappingContext = {
 };
 
 /**
- * One-shot fetch of the specialty fields the mapping workflow needs. Not
- * cached — the workflow runs this as a step at startup, so the event log
- * picks it up from the cached step value on replay.
+ * One-shot fetch of the specialty fields the mapping workflow needs. Step-
+ * cached so replays read from the workflow event log, not Convex.
  */
 export async function loadSpecialtyForMapping(
   specialtySlug: string,
@@ -305,12 +285,6 @@ export type MappingFilter = {
   codes?: string[];
 };
 
-/**
- * All rows for a specialty that the mapping workflow hasn't touched yet
- * (`isInAMBOSS` unset), optionally narrowed to specific categories or
- * individual codes. Kept in its own step so the mapping workflow's initial
- * load replays from the event log on crash instead of re-querying.
- */
 export async function listUnmappedCodes(
   specialtySlug: string,
   filter?: MappingFilter | null,
@@ -326,20 +300,6 @@ export async function listUnmappedCodes(
   return rows;
 }
 
-/**
- * Write-through of a single mapping into the canonical `codes` row. Called
- * per-code from the mapping workflow immediately after the agent returns, so
- * the Codes tab reflects progress live across all editors via Convex's
- * reactive queries. The mutation also clears the in-flight marker for this
- * code in the same transaction.
- *
- * Blob-shaped fields (covered sections, section updates, new article
- * suggestions) are JSON-stringified before passing — the Convex schema
- * stores them as strings to dodge the ASCII-only field-name restriction
- * since the existing payloads use unicode-bearing strings as JSON keys
- * (e.g. section titles like "Vitamin B₁₂"). Read-side query handlers
- * JSON.parse them back, so UI consumers don't see the wire format.
- */
 export async function writeCodeMapping(
   specialtySlug: string,
   code: string,
@@ -374,11 +334,6 @@ export async function writeCodeMapping(
   });
 }
 
-/**
- * Clear mapping-derived fields for a single code so it can be remapped from
- * scratch. Mirrors the per-specialty clear in `reset.ts` but scoped to one
- * row; used by the per-row "Remap" action.
- */
 export async function clearMappingForCode(
   specialtySlug: string,
   code: string,
@@ -387,13 +342,6 @@ export async function clearMappingForCode(
   await fetchMutation(api.codes.clearMapping, { slug: specialtySlug, code });
 }
 
-/**
- * Mark a batch of codes as in-flight at the start of a map_codes batch.
- * Drives the live MappingPulse indicator on the codes table — every
- * connected client sees the pulse appear without polling because the
- * `inFlight` Convex query is reactive. Each entry is cleared inline by
- * `writeCodeMapping` once that code finishes.
- */
 export async function markCodesInFlight(
   specialtySlug: string,
   codes: string[],
@@ -409,11 +357,6 @@ export async function markCodesInFlight(
   await fetchMutation(api.codes.markInFlight, { slug: specialtySlug, codes, runId });
 }
 
-/**
- * Drop every in-flight marker for a run — called when the workflow finishes
- * (success, failure, or cancellation) to make sure no zombie pulses linger
- * on rows whose batch crashed before `writeCodeMapping` could clear them.
- */
 export async function clearInFlightForRun(runId: string): Promise<void> {
   'use step';
   console.log('[pipeline] clearInFlightForRun', { runId });

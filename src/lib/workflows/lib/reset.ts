@@ -1,20 +1,9 @@
 /**
- * Stage-reset helpers.
- *
- * Resetting a stage clears its output artifacts AND cascades through every
- * downstream stage (since their inputs just disappeared). Used by the
- * /api/workflows/reset-stage route.
+ * Stage-reset helpers. Resetting a stage clears its output artifacts AND
+ * cascades through every downstream stage. Used by /api/workflows/reset-stage.
  */
 
 import { fetchMutation } from 'convex/nextjs';
-import { and, eq, notInArray } from 'drizzle-orm';
-import { getDb } from '@/lib/db';
-import {
-  extractedCodes,
-  pipelineEvents,
-  pipelineRuns,
-  pipelineStages,
-} from '@/lib/db/schema';
 import { api } from '../../../../convex/_generated/api';
 import type { StageName } from './db-writes';
 
@@ -36,13 +25,9 @@ export function stagesToReset(stage: StageName): StageName[] {
   return [stage, ...DOWNSTREAM[stage]];
 }
 
-async function clearStageData(stage: StageName, specialtySlug: string, runId: string) {
-  const db = getDb();
+async function clearEditorDataForStage(stage: StageName, specialtySlug: string) {
   switch (stage) {
     case 'extract_codes':
-      // Staging rows for this run live in Postgres; promoted codes live in
-      // Convex and are wiped via the cascading delete mutation.
-      await db.delete(extractedCodes).where(eq(extractedCodes.runId, runId));
       await fetchMutation(api.codes.deleteForSpecialty, { slug: specialtySlug });
       break;
     case 'extract_milestones':
@@ -52,9 +37,6 @@ async function clearStageData(stage: StageName, specialtySlug: string, runId: st
       });
       break;
     case 'map_codes':
-      // Bulk-clear the mapping fields on every code in the specialty (the
-      // mutation skips rows that are already unmapped). Also drops any
-      // in-flight markers in the same transaction.
       await fetchMutation(api.codes.clearAllMappingsForSpecialty, {
         slug: specialtySlug,
       });
@@ -77,82 +59,35 @@ async function clearStageData(stage: StageName, specialtySlug: string, runId: st
 }
 
 /**
- * Reset the given stage and every downstream stage for the run. Also marks the
- * pipeline run as `cancelled` so the UI stops treating it as active — the user
- * can immediately start a fresh run. Returns the stages that were cleared.
+ * Reset the given stage and every downstream stage for the run. Also marks
+ * every non-terminal pipeline run for the specialty as `cancelled` so the UI
+ * stops treating any stale run as active.
  */
 export async function resetStageCascade(input: {
   runId: string;
   specialtySlug: string;
   stage: StageName;
 }): Promise<StageName[]> {
-  const db = getDb();
   const toReset = stagesToReset(input.stage);
   for (const s of toReset) {
-    await clearStageData(s, input.specialtySlug, input.runId);
-    // Purge the event log for this stage so the card's Log panel starts
-    // empty when the stage is re-run.
-    await db
-      .delete(pipelineEvents)
-      .where(and(eq(pipelineEvents.runId, input.runId), eq(pipelineEvents.stage, s)));
-    await db
-      .update(pipelineStages)
-      .set({
-        status: 'pending',
-        startedAt: null,
-        finishedAt: null,
-        approvedAt: null,
-        approvedBy: null,
-        outputSummary: null,
-        draftPayload: null,
-        errorMessage: null,
-      })
-      .where(and(eq(pipelineStages.runId, input.runId), eq(pipelineStages.stage, s)));
+    await clearEditorDataForStage(s, input.specialtySlug);
+    await fetchMutation(api.pipeline.resetStage, { runId: input.runId, stage: s });
   }
-  // Cancel every non-terminal pipeline run for this specialty — not just the
-  // stage's owning run. Per-code remap-code calls and partial map_codes runs
-  // each get their own pipeline_runs row; if one of them crashed mid-flight
-  // it keeps `status='running'`, and getCurrentPipelineRun will keep telling
-  // the dashboard a run is active. Resetting any stage is the user signalling
-  // "clear the slate," so it should sweep these zombies too.
-  await db
-    .update(pipelineRuns)
-    .set({
-      status: 'cancelled',
-      finishedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(pipelineRuns.specialtySlug, input.specialtySlug),
-        notInArray(pipelineRuns.status, ['completed', 'failed', 'cancelled']),
-      ),
-    );
+  await fetchMutation(api.pipeline.cancelStaleRunsForSpecialty, {
+    slug: input.specialtySlug,
+  });
   return toReset;
 }
 
 /**
  * Cancel every non-terminal pipeline run for a specialty without touching
  * stage data, mappings, or extracted codes. Use this when the dashboard is
- * stuck in "Run in progress" because of a zombie run (e.g. crashed
- * remap-code) but the user wants to keep the data they have and start a new
- * run on top of it. Returns the count of runs cancelled.
+ * stuck in "Run in progress" because of a zombie run but the user wants to
+ * keep the data they have. Returns the count of runs cancelled.
  */
 export async function clearStaleRunsForSpecialty(specialtySlug: string): Promise<number> {
-  const db = getDb();
-  const result = await db
-    .update(pipelineRuns)
-    .set({
-      status: 'cancelled',
-      finishedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(pipelineRuns.specialtySlug, specialtySlug),
-        notInArray(pipelineRuns.status, ['completed', 'failed', 'cancelled']),
-      ),
-    )
-    .returning({ id: pipelineRuns.id });
-  return result.length;
+  const result = await fetchMutation(api.pipeline.cancelStaleRunsForSpecialty, {
+    slug: specialtySlug,
+  });
+  return result.cancelled;
 }
