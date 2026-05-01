@@ -5,26 +5,24 @@
  *   body: {
  *     specialtySlug: string;
  *     inputs: Array<{ source: 'ab' | 'orphanet' | 'icd10'; url: string }>;
- *     identifyModulesInstructions?: string;   // appended to DEFAULT_IDENTIFY_SYSTEM_PROMPT
- *     extractCodesInstructions?: string;      // appended to DEFAULT_EXTRACT_SYSTEM_PROMPT
+ *     identifyModulesInstructions?: string;
+ *     extractCodesInstructions?: string;
  *   }
  *
  * Responsibility:
- *   1. Verify the specialty exists.
- *   2. Create a pipeline_runs row (with the inputs + per-phase instructions
- *      snapshot) + the extract_codes stage.
+ *   1. Verify the specialty exists in Convex.
+ *   2. Create a pipelineRuns row + the extract_codes stage.
  *   3. Call `start(extractCodesWorkflow, ...)` and record the workflow run id.
  */
 
-import { eq } from 'drizzle-orm';
+import { fetchMutation, fetchQuery } from 'convex/nextjs';
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
 import { start } from 'workflow/api';
 import { listCodeSources } from '@/lib/data/code-sources';
-import { getDb } from '@/lib/db';
-import { pipelineRuns, pipelineStages, specialties } from '@/lib/db/schema';
 import { approvalToken } from '@/lib/workflows/lib/approval';
 import { extractCodesWorkflow } from '@/lib/workflows/preprocessing/extract-codes';
+import { api } from '../../../../../convex/_generated/api';
 import { parseContentInputs } from '../_lib/inputs';
 
 type Body = {
@@ -48,8 +46,7 @@ export async function POST(req: NextRequest) {
   }
   const inputs = parsed;
 
-  const db = getDb();
-  const [spec] = await db.select().from(specialties).where(eq(specialties.slug, slug));
+  const spec = await fetchQuery(api.specialties.get, { slug });
   if (!spec) {
     return NextResponse.json({ error: `specialty not found: ${slug}` }, { status: 404 });
   }
@@ -57,24 +54,24 @@ export async function POST(req: NextRequest) {
   const identifyInstructions = body.identifyModulesInstructions?.trim() || null;
   const extractInstructions = body.extractCodesInstructions?.trim() || null;
 
-  const [run] = await db
-    .insert(pipelineRuns)
-    .values({
-      specialtySlug: slug,
-      status: 'running',
-      contentOutlineUrls: inputs,
-      identifyModulesInstructions: identifyInstructions,
-      extractCodesInstructions: extractInstructions,
-    })
-    .returning({ id: pipelineRuns.id });
-
-  await db
-    .insert(pipelineStages)
-    .values({ runId: run.id, stage: 'extract_codes', status: 'pending' });
+  const { id: runId } = await fetchMutation(api.pipeline.createRun, {
+    specialtySlug: slug,
+  });
+  await fetchMutation(api.pipeline.updateRun, {
+    runId,
+    patch: {
+      contentOutlineUrls: JSON.stringify(inputs),
+      ...(identifyInstructions
+        ? { identifyModulesInstructions: identifyInstructions }
+        : {}),
+      ...(extractInstructions ? { extractCodesInstructions: extractInstructions } : {}),
+    },
+  });
+  await fetchMutation(api.pipeline.initStage, { runId, stage: 'extract_codes' });
 
   const wfRun = await start(extractCodesWorkflow, [
     {
-      runId: run.id,
+      runId,
       specialtySlug: slug,
       inputs,
       identifyInstructions: identifyInstructions ?? undefined,
@@ -82,19 +79,19 @@ export async function POST(req: NextRequest) {
     },
   ]);
 
-  await db
-    .update(pipelineRuns)
-    .set({ workflowRunId: wfRun.runId, updatedAt: new Date() })
-    .where(eq(pipelineRuns.id, run.id));
+  await fetchMutation(api.pipeline.updateRun, {
+    runId,
+    patch: { workflowRunId: wfRun.runId },
+  });
 
   revalidateTag(`pipeline:${slug}`, 'max');
   revalidateTag('specialty-phases', 'max');
 
   return NextResponse.json({
-    runId: run.id,
+    runId,
     workflowRunId: wfRun.runId,
     specialty: slug,
     inputs: inputs.length,
-    approvalToken: approvalToken(run.id, 'extract_codes'),
+    approvalToken: approvalToken(runId, 'extract_codes'),
   });
 }

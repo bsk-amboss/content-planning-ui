@@ -1,114 +1,111 @@
 /**
  * Backfill a synthetic completed pipeline run so the dashboard reflects state
- * imported outside of the workflow (e.g. `db:seed` + `db:import-milestones`).
+ * imported outside of the workflow (e.g. seed-convex + import-milestones).
  *
- * Inserts one `pipeline_runs` row (status='completed') and one
- * `pipeline_stages` row per stage requested (status='completed',
- * approvedBy='import'). Output summaries record what was imported.
+ * Inserts one Convex pipelineRuns row + one pipelineStages row per requested
+ * stage (status='completed', approvedBy='import'). Output summaries record
+ * what was imported (codes count, milestones length).
  *
  * Usage:
- *   npm run db:mark-imported -- anesthesiology codes milestones
- *   npm run db:mark-imported -- anesthesiology codes
+ *   pnpm db:mark-imported -- anesthesiology codes milestones mapping
+ *   pnpm db:mark-imported -- anesthesiology codes
  */
 
-import { eq, sql } from 'drizzle-orm';
-import { getDb } from '@/lib/db';
-import {
-  codes as codesTable,
-  pipelineRuns,
-  pipelineStages,
-  specialties,
-} from '@/lib/db/schema';
+import { ConvexHttpClient } from 'convex/browser';
+import { env } from '@/env';
+import { api } from '../convex/_generated/api';
 
-type Stage = 'codes' | 'milestones';
-const STAGE_NAME: Record<Stage, 'extract_codes' | 'extract_milestones'> = {
+type Stage = 'codes' | 'milestones' | 'mapping';
+const STAGE_NAME: Record<Stage, 'extract_codes' | 'extract_milestones' | 'map_codes'> = {
   codes: 'extract_codes',
   milestones: 'extract_milestones',
+  mapping: 'map_codes',
 };
 
 async function main() {
   const [slug, ...stageArgs] = process.argv.slice(2);
   if (!slug || stageArgs.length === 0) {
-    console.error('Usage: db:mark-imported -- <slug> <codes|milestones> [...]');
+    console.error('Usage: db:mark-imported -- <slug> <codes|milestones|mapping> [...]');
     process.exit(1);
   }
   const stages = stageArgs.map((s) => {
-    if (s !== 'codes' && s !== 'milestones') {
-      throw new Error(`unknown stage '${s}' — expected 'codes' or 'milestones'`);
+    if (s !== 'codes' && s !== 'milestones' && s !== 'mapping') {
+      throw new Error(
+        `unknown stage '${s}' — expected 'codes', 'milestones', or 'mapping'`,
+      );
     }
     return s as Stage;
   });
 
-  const db = getDb();
+  if (!env.NEXT_PUBLIC_CONVEX_URL) {
+    throw new Error('NEXT_PUBLIC_CONVEX_URL is not set');
+  }
+  const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
 
-  const [spec] = await db
-    .select({ slug: specialties.slug, milestones: specialties.milestones })
-    .from(specialties)
-    .where(eq(specialties.slug, slug))
-    .limit(1);
+  const spec = await convex.query(api.specialties.get, { slug });
   if (!spec) {
-    console.error(`No specialty '${slug}'.`);
+    console.error(`No specialty '${slug}' in Convex.`);
     process.exit(1);
   }
 
-  const codeCount = stages.includes('codes')
-    ? Number(
-        (
-          await db
-            .select({ n: sql<number>`count(*)::int` })
-            .from(codesTable)
-            .where(eq(codesTable.specialtySlug, slug))
-        )[0]?.n ?? 0,
-      )
-    : 0;
+  const codeCount =
+    stages.includes('codes') || stages.includes('mapping')
+      ? (await convex.query(api.codes.list, { slug })).length
+      : 0;
   const milestoneChars = stages.includes('milestones')
     ? (spec.milestones?.length ?? 0)
     : 0;
 
   if (stages.includes('codes') && codeCount === 0) {
-    console.warn('[mark-imported] codes stage requested but no codes rows exist.');
+    console.warn(
+      '[mark-imported] codes stage requested but Convex has no codes for this specialty.',
+    );
+  }
+  if (stages.includes('mapping') && codeCount === 0) {
+    console.warn(
+      '[mark-imported] mapping stage requested but no codes — synthetic map_codes will report mapped: 0.',
+    );
   }
   if (stages.includes('milestones') && milestoneChars === 0) {
     console.warn(
-      '[mark-imported] milestones stage requested but specialty has no milestones text.',
+      '[mark-imported] milestones stage requested but specialty has no milestones text in Convex.',
     );
   }
 
-  const now = new Date();
-  const [run] = await db
-    .insert(pipelineRuns)
-    .values({
-      specialtySlug: slug,
-      status: 'completed',
-      startedAt: now,
-      updatedAt: now,
-      finishedAt: now,
-    })
-    .returning({ id: pipelineRuns.id });
+  const { id: runId } = await convex.mutation(api.pipeline.createRun, {
+    specialtySlug: slug,
+  });
+  const now = Date.now();
+  await convex.mutation(api.pipeline.updateRun, {
+    runId,
+    patch: { status: 'completed', finishedAt: now },
+  });
 
   for (const stage of stages) {
     const stageName = STAGE_NAME[stage];
     const outputSummary =
       stage === 'codes'
         ? { source: 'manual_import', codes: codeCount }
-        : { source: 'manual_import', milestones_chars: milestoneChars };
-    await db.insert(pipelineStages).values({
-      runId: run.id,
+        : stage === 'milestones'
+          ? { source: 'manual_import', milestones_chars: milestoneChars }
+          : { source: 'manual_import', mapped: codeCount };
+    await convex.mutation(api.pipeline.initStage, { runId, stage: stageName });
+    await convex.mutation(api.pipeline.updateStage, {
+      runId,
       stage: stageName,
-      status: 'completed',
-      startedAt: now,
-      finishedAt: now,
-      approvedAt: now,
-      approvedBy: 'import',
-      outputSummary,
+      patch: {
+        status: 'completed',
+        startedAt: now,
+        finishedAt: now,
+        approvedAt: now,
+        approvedBy: 'import',
+        outputSummary: JSON.stringify(outputSummary),
+      },
     });
   }
 
   console.log(
-    `✓ Backfilled run ${run.id} for '${slug}' — stages: ${stages.map((s) => STAGE_NAME[s]).join(', ')}`,
-  );
-  console.log(
-    `  Now revalidate caches: curl -X POST http://localhost:3000/api/internal/revalidate -H 'content-type: application/json' -d '{"tags":["pipeline:${slug}","specialty-phases","specialties"]}'`,
+    `✓ Backfilled run ${runId} for '${slug}' — stages: ${stages.map((s) => STAGE_NAME[s]).join(', ')}`,
   );
 }
 

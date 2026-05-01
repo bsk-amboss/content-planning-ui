@@ -1,15 +1,12 @@
 /**
- * Per-stage event logger — writes a row to pipeline_events for observability.
- *
- * Called from inside other `"use step"` functions (which have full Node/DB
- * access). Making logEvent itself a step gives it its own retry semantics and
- * keeps the event-log's truth table in the workflow event log, not side
- * effects.
+ * Per-stage event logger — writes a row to pipelineEvents in Convex for
+ * observability. Called from inside other `'use step'` functions; making
+ * `logEvent` itself a step gives it its own retry semantics and bakes the
+ * event-log writes into the workflow's durability replay.
  */
 
-import { and, eq, sql } from 'drizzle-orm';
-import { getDb } from '@/lib/db';
-import { pipelineEvents, pipelineStages } from '@/lib/db/schema';
+import { fetchMutation, fetchQuery } from 'convex/nextjs';
+import { api } from '../../../../convex/_generated/api';
 import type { StageName } from './db-writes';
 
 export type EventLevel = 'info' | 'warn' | 'error';
@@ -28,22 +25,12 @@ export type EventMetrics = {
   /** Which sub-step produced the event — so the UI can split completions
    *  into "Identify modules" / "Extract codes" / "Milestones" / "Map" buckets. */
   phase?: 'identify' | 'extract' | 'milestones' | 'map';
-  /** Raw parsed LLM output for this call. Array of `{ category }` for
-   *  `identify` events; array of `{ category, description }` for `extract`
-   *  events; a plain string for `milestones` events; a `MappingOutput` object
-   *  for `map` events. Stored verbatim so the UI can render the actual
-   *  completions. */
+  /** Raw parsed LLM output for this call. */
   completion?: unknown;
-  /** Per-code metadata for `map` events — the code being processed, number of
-   *  attempts the retry ladder took, the model that eventually produced the
-   *  accepted (or last) mapping, and any article/section IDs still invalid
-   *  when the ladder exhausted. */
+  /** Per-code metadata for `map` events. */
   code?: string;
   attempts?: number;
   invalidIds?: string[];
-  /** Number of MCP tool calls the model made during this attempt (across all
-   *  reasoning steps). `mcpToolNames` is the per-call list of names so the UI
-   *  can roll up to e.g. "search_article_sections ×3, get_sections ×8". */
   mcpToolCalls?: number;
   mcpToolNames?: string[];
 };
@@ -56,13 +43,12 @@ export async function logEvent(input: {
   metrics?: EventMetrics;
 }): Promise<void> {
   'use step';
-  const db = getDb();
-  await db.insert(pipelineEvents).values({
+  await fetchMutation(api.pipeline.logEvent, {
     runId: input.runId,
     stage: input.stage,
     level: input.level,
     message: input.message,
-    metrics: input.metrics ?? null,
+    metrics: input.metrics ? JSON.stringify(input.metrics) : undefined,
   });
 }
 
@@ -77,20 +63,17 @@ export type StageTotals = {
 };
 
 /**
- * Sum per-call metrics from pipeline_events for a single stage, and compute
- * wall-clock durationMs from the pipeline_stages row's startedAt. Called once
- * at stage completion to populate outputSummary.
+ * Sum per-call metrics from pipelineEvents for a single stage, plus wall-clock
+ * durationMs from the stage's startedAt. Called once at stage completion to
+ * populate outputSummary.
  */
 export async function aggregateStageMetrics(
   runId: string,
   stage: StageName,
 ): Promise<StageTotals> {
   'use step';
-  const db = getDb();
-  const events = await db
-    .select()
-    .from(pipelineEvents)
-    .where(and(eq(pipelineEvents.runId, runId), eq(pipelineEvents.stage, stage)));
+  const events = await fetchQuery(api.pipeline.listEvents, { runId });
+  const stageRow = await fetchQuery(api.pipeline.getStage, { runId, stage });
 
   let apiCalls = 0;
   let computeMs = 0;
@@ -100,7 +83,8 @@ export async function aggregateStageMetrics(
   let costUsd = 0;
   let anyCost = false;
   for (const e of events) {
-    const m = (e.metrics ?? {}) as EventMetrics;
+    if (e.stage !== stage) continue;
+    const m = (e.metrics ? JSON.parse(e.metrics) : {}) as EventMetrics;
     if (typeof m.durationMs === 'number' && m.durationMs > 0) {
       apiCalls += 1;
       computeMs += m.durationMs;
@@ -114,16 +98,9 @@ export async function aggregateStageMetrics(
     }
   }
 
-  const [row] = await db
-    .select({ startedAt: pipelineStages.startedAt })
-    .from(pipelineStages)
-    .where(and(eq(pipelineStages.runId, runId), eq(pipelineStages.stage, stage)))
-    .limit(1);
-  const durationMs = row?.startedAt
-    ? Math.max(0, Date.now() - new Date(row.startedAt).getTime())
+  const durationMs = stageRow?.startedAt
+    ? Math.max(0, Date.now() - stageRow.startedAt)
     : null;
-
-  void sql; // reserved for future raw aggregation if needed
 
   return {
     apiCalls,

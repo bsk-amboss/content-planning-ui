@@ -1,16 +1,13 @@
 /**
- * Cached lookups for the AMBOSS article/section catalog.
+ * Lookups for the AMBOSS article/section catalog (Convex-backed).
  *
- * The mapping workflow validates every cited ID against these sets. The
- * underlying tables are refreshed out-of-band via
- * `scripts/refresh-amboss-library.ts`; the `amboss-library` cache tag flushes
- * every reader after a refresh.
+ * The mapping workflow validates every cited ID against these sets. Convex
+ * caches its own queries, so we no longer wrap with Next.js `'use cache'`.
  */
 
-import { desc } from 'drizzle-orm';
-import { cacheLife, cacheTag } from 'next/cache';
-import { getDb } from '@/lib/db';
-import { ambossArticles, ambossSections } from '@/lib/db/schema';
+import { fetchQuery } from 'convex/nextjs';
+import { connection } from 'next/server';
+import { api } from '../../../convex/_generated/api';
 
 export type AmbossLibraryStats = {
   articles: number;
@@ -19,38 +16,23 @@ export type AmbossLibraryStats = {
 };
 
 export async function listAmbossArticleIds(): Promise<Set<string>> {
-  'use cache';
-  cacheTag('amboss-library');
-  cacheLife('hours');
-  const db = getDb();
-  const rows = await db.select({ id: ambossArticles.id }).from(ambossArticles);
-  return new Set(rows.map((r) => r.id));
+  await connection();
+  const ids = await fetchQuery(api.amboss.listArticleIds);
+  return new Set(ids);
 }
 
 export async function listAmbossSectionIds(): Promise<Set<string>> {
-  'use cache';
-  cacheTag('amboss-library');
-  cacheLife('hours');
-  const db = getDb();
-  const rows = await db.select({ id: ambossSections.id }).from(ambossSections);
-  return new Set(rows.map((r) => r.id));
+  await connection();
+  const ids = await fetchQuery(api.amboss.listSectionIds);
+  return new Set(ids);
 }
 
 export async function getAmbossLibraryStats(): Promise<AmbossLibraryStats> {
-  'use cache';
-  cacheTag('amboss-library');
-  cacheLife('hours');
-  const db = getDb();
-  const articleCount = await db.$count(ambossArticles);
-  const sectionCount = await db.$count(ambossSections);
-  const [latest] = await db
-    .select({ updatedAt: ambossArticles.updatedAt })
-    .from(ambossArticles)
-    .orderBy(desc(ambossArticles.updatedAt))
-    .limit(1);
+  await connection();
+  const s = await fetchQuery(api.amboss.stats);
   return {
-    articles: articleCount,
-    sections: sectionCount,
-    lastSyncedAt: latest?.updatedAt ?? null,
+    articles: s.articles,
+    sections: s.sections,
+    lastSyncedAt: s.lastSyncedAt ? new Date(s.lastSyncedAt) : null,
   };
 }

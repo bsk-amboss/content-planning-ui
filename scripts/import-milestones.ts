@@ -1,15 +1,15 @@
 /**
- * Write milestone text from a local file into specialties.milestones.
+ * Write milestone text from a local file into specialties.milestones in Convex.
  *
  * Usage:
- *   npm run db:import-milestones -- anesthesiology anesthesiology_milestones.txt
+ *   pnpm db:import-milestones -- anesthesiology anesthesiology_milestones.txt
  */
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { eq } from 'drizzle-orm';
-import { getDb } from '@/lib/db';
-import { specialties } from '@/lib/db/schema';
+import { ConvexHttpClient } from 'convex/browser';
+import { env } from '@/env';
+import { api } from '../convex/_generated/api';
 
 async function main() {
   const [slug, file] = process.argv.slice(2);
@@ -17,20 +17,19 @@ async function main() {
     console.error('Usage: db:import-milestones -- <slug> <file>');
     process.exit(1);
   }
+  if (!env.NEXT_PUBLIC_CONVEX_URL) {
+    throw new Error('NEXT_PUBLIC_CONVEX_URL is not set');
+  }
   const abs = path.isAbsolute(file) ? file : path.join(process.cwd(), file);
   const text = (await readFile(abs, 'utf8')).trim();
 
-  const db = getDb();
-  const result = await db
-    .update(specialties)
-    .set({ milestones: text })
-    .where(eq(specialties.slug, slug))
-    .returning({ slug: specialties.slug });
+  const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
+  await convex.mutation(api.specialties.updateMilestones, {
+    slug,
+    milestones: text,
+    bumpSeedTimestamp: true,
+  });
 
-  if (result.length === 0) {
-    console.error(`No specialty found with slug '${slug}'.`);
-    process.exit(1);
-  }
   console.log(
     `✓ Wrote ${text.length.toLocaleString()} chars of milestones to '${slug}'.`,
   );

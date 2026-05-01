@@ -1,21 +1,19 @@
 /**
  * Cancel a stuck or in-progress stage. Stops the underlying workflow run
- * (best-effort, since the run may already be finished or missing) and runs
- * the same `resetStageCascade` as the reset endpoint, so the card returns
- * to `pending` and the user can rerun.
+ * (best-effort) and runs `resetStageCascade` so the card returns to
+ * `pending` and the user can rerun.
  *
  * POST /api/workflows/cancel
  *   body: { runId: string; specialtySlug: string; stage: StageName }
  */
 
-import { eq } from 'drizzle-orm';
+import { fetchQuery } from 'convex/nextjs';
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
 import { getRun } from 'workflow/api';
-import { getDb } from '@/lib/db';
-import { pipelineRuns } from '@/lib/db/schema';
 import type { StageName } from '@/lib/workflows/lib/db-writes';
 import { resetStageCascade } from '@/lib/workflows/lib/reset';
+import { api } from '../../../../../convex/_generated/api';
 
 const VALID_STAGES: ReadonlySet<StageName> = new Set([
   'extract_codes',
@@ -49,16 +47,10 @@ export async function POST(req: NextRequest) {
 
   console.log('[cancel-stage]', body);
 
-  const db = getDb();
-  const [run] = await db
-    .select({ workflowRunId: pipelineRuns.workflowRunId })
-    .from(pipelineRuns)
-    .where(eq(pipelineRuns.id, body.runId));
+  const run = await fetchQuery(api.pipeline.getRun, { runId: body.runId });
 
-  // Reset DB state first — this is what unblocks the UI. The workflow runtime
-  // cancel is fire-and-forget below: even if the underlying store is slow or
-  // unreachable, the user gets their card back to `pending` immediately, and
-  // any further writes from the orphaned run hit a row already in `cancelled`.
+  // Reset state first — this is what unblocks the UI. The workflow runtime
+  // cancel is fire-and-forget below.
   const reset = await resetStageCascade({
     runId: body.runId,
     specialtySlug: body.specialtySlug,

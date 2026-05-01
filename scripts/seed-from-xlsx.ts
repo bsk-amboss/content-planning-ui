@@ -1,45 +1,25 @@
 /**
- * Seed Postgres from local xlsx fixtures.
+ * Seed Convex ontology tables (ICD-10, HCUP, ABIM, Orpha) from xlsx fixtures.
  *
- * Reads the same fixture registry the repositories layer uses, parses every tab
- * via the existing xlsx repos, and writes rows into Neon via Drizzle. Idempotent
- * per specialty: rows are deleted + re-inserted.
+ *   pnpm db:seed
  *
- * Run with: npm run db:seed
+ * Per-specialty: clears the four ontology tables in Convex, re-inserts in
+ * 100-row chunks (well under the 4 MiB/s free-tier write cap). Uses the same
+ * xlsx repository the editor seed reads from.
+ *
+ * Editor data (codes/articles/sections/categories) lives in Convex and is
+ * seeded via `pnpm seed:convex`. Milestones via `pnpm db:import-milestones`.
  */
 
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { eq } from 'drizzle-orm';
-import { getDb } from '@/lib/db';
-import {
-  abimToRow,
-  articleSuggestionToRow,
-  codeCategoryToRow,
-  codeToRow,
-  consolidatedArticleToRow,
-  consolidatedSectionToRow,
-  icdToRow,
-  orphaToRow,
-  statsToRow,
-} from '@/lib/db/mappers';
-import {
-  abimCodes,
-  articleUpdateSuggestions,
-  codeCategories,
-  codes,
-  consolidatedArticles,
-  consolidatedSections,
-  hcupCodes,
-  icd10Codes,
-  newArticleSuggestions,
-  orphaCodes,
-  specialties as specialtiesTable,
-  specialtyStats,
-} from '@/lib/db/schema';
+import { ConvexHttpClient } from 'convex/browser';
+import { env } from '@/env';
 import { createXlsxRepos } from '@/lib/repositories/xlsx/repos';
+import { api } from '../convex/_generated/api';
 
-const BATCH = 300;
+const CHUNK = 100;
+const THROTTLE_MS = 250;
 
 function titleCase(slug: string): string {
   return slug
@@ -64,24 +44,23 @@ function parseFixturesEnv(): Array<{ slug: string; name: string; xlsxPath: strin
   return out;
 }
 
-async function insertInBatches<T>(
-  rows: T[],
-  insert: (chunk: T[]) => Promise<unknown>,
-): Promise<void> {
-  for (let i = 0; i < rows.length; i += BATCH) {
-    const chunk = rows.slice(i, i + BATCH);
-    await insert(chunk);
+async function chunked<T>(rows: T[], size: number, fn: (chunk: T[]) => Promise<unknown>) {
+  for (let i = 0; i < rows.length; i += size) {
+    await fn(rows.slice(i, i + size));
+    await new Promise((r) => setTimeout(r, THROTTLE_MS));
   }
 }
 
 async function main() {
+  if (!env.NEXT_PUBLIC_CONVEX_URL) throw new Error('NEXT_PUBLIC_CONVEX_URL is not set');
+
   const fixtures = parseFixturesEnv();
   if (fixtures.length === 0) {
     console.error('No xlsx fixtures found. Nothing to seed.');
     process.exit(1);
   }
 
-  const db = getDb();
+  const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
   const xlsxRepos = createXlsxRepos(fixtures);
 
   for (const fx of fixtures) {
@@ -89,158 +68,71 @@ async function main() {
       `\n→ Seeding "${fx.slug}" from ${path.relative(process.cwd(), fx.xlsxPath)}`,
     );
 
-    // Upsert specialty. Child rows cascade on delete, so we clear them by FK below
-    // rather than deleting the specialty row (which would also drop the FK target).
-    await db
-      .insert(specialtiesTable)
-      .values({
-        slug: fx.slug,
-        name: fx.name,
-        source: 'xlsx',
-        xlsxPath: fx.xlsxPath,
-        lastSeededAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: specialtiesTable.slug,
-        set: {
-          name: fx.name,
-          source: 'xlsx',
-          xlsxPath: fx.xlsxPath,
-          lastSeededAt: new Date(),
-        },
-      });
-
-    // Clear child rows for this specialty.
-    const childTables = [
-      codes,
-      codeCategories,
-      consolidatedArticles,
-      consolidatedSections,
-      newArticleSuggestions,
-      articleUpdateSuggestions,
-      icd10Codes,
-      hcupCodes,
-      abimCodes,
-      orphaCodes,
-    ] as const;
-    for (const t of childTables) {
-      await db.delete(t).where(eq(t.specialtySlug, fx.slug));
-    }
-    await db.delete(specialtyStats).where(eq(specialtyStats.specialtySlug, fx.slug));
-
-    // --- Fetch + map + insert -------------------------------------------------
-    const [
-      codeList,
-      catList,
-      consArticles,
-      consSections,
-      newArticles,
-      updateArticles,
-      icd10,
-      hcup,
-      abim,
-      orpha,
-      stats,
-    ] = await Promise.all([
-      xlsxRepos.codes.list(fx.slug),
-      xlsxRepos.categories.list(fx.slug),
-      xlsxRepos.articles.listConsolidated(fx.slug),
-      xlsxRepos.sections.listConsolidated(fx.slug),
-      xlsxRepos.articles.listNew(fx.slug),
-      xlsxRepos.articles.listUpdates(fx.slug),
+    const [icd10, hcup, abim, orpha] = await Promise.all([
       xlsxRepos.sources.icd10(fx.slug),
       xlsxRepos.sources.hcup(fx.slug),
       xlsxRepos.sources.abim(fx.slug),
       xlsxRepos.sources.orpha(fx.slug),
-      xlsxRepos.stats.get(fx.slug),
     ]);
 
-    const results: Array<[string, number]> = [];
+    await Promise.all([
+      convex.mutation(api.ontology.clearIcd10ForSpecialty, { slug: fx.slug }),
+      convex.mutation(api.ontology.clearHcupForSpecialty, { slug: fx.slug }),
+      convex.mutation(api.ontology.clearAbimForSpecialty, { slug: fx.slug }),
+      convex.mutation(api.ontology.clearOrphaForSpecialty, { slug: fx.slug }),
+    ]);
 
-    if (codeList.length) {
-      await insertInBatches(
-        codeList.map((c) => codeToRow(c, fx.slug)),
-        (chunk) => db.insert(codes).values(chunk),
+    if (icd10.length)
+      await chunked(icd10, CHUNK, (chunk) =>
+        convex.mutation(api.ontology.bulkInsertIcd10, { slug: fx.slug, rows: chunk }),
       );
-      results.push(['codes', codeList.length]);
-    }
-
-    if (catList.length) {
-      await insertInBatches(
-        catList.map((c) => codeCategoryToRow(c, fx.slug)),
-        (chunk) => db.insert(codeCategories).values(chunk),
+    if (hcup.length)
+      await chunked(hcup, CHUNK, (chunk) =>
+        convex.mutation(api.ontology.bulkInsertHcup, { slug: fx.slug, rows: chunk }),
       );
-      results.push(['code_categories', catList.length]);
-    }
-
-    if (consArticles.length) {
-      await insertInBatches(
-        consArticles.map((a) => consolidatedArticleToRow(a, fx.slug)),
-        (chunk) => db.insert(consolidatedArticles).values(chunk),
+    if (abim.length)
+      await chunked(abim, CHUNK, (chunk) =>
+        convex.mutation(api.ontology.bulkInsertAbim, {
+          slug: fx.slug,
+          rows: chunk.map((r) => ({
+            abimIndex: r.Index,
+            primaryCategory: r.primaryCategory,
+            secondaryCategory: r.secondaryCategory,
+            tertiaryCategory: r.tertiaryCategory,
+            disease: r.disease,
+            specialty: r.Specialty,
+            code: r.code,
+            item: r.item,
+            choice: r.choice,
+            category: r.category,
+            count: r.count,
+          })),
+        }),
       );
-      results.push(['consolidated_articles', consArticles.length]);
-    }
-
-    if (consSections.length) {
-      await insertInBatches(
-        consSections.map((s) => consolidatedSectionToRow(s, fx.slug)),
-        (chunk) => db.insert(consolidatedSections).values(chunk),
+    if (orpha.length)
+      await chunked(orpha, CHUNK, (chunk) =>
+        convex.mutation(api.ontology.bulkInsertOrpha, {
+          slug: fx.slug,
+          rows: chunk.map((r) => ({
+            orphaCode: r.orphaCode,
+            parentOrphaCode: r.parentOrphaCode,
+            specificName: r.specificName,
+            parentCategory: r.parentCategory,
+            orphaTargetFilenamesToInclude: r.orphaTargetFilenamesToInclude,
+            icd10LettersToInclude: r.icd10lettersToInclude,
+            count: r.count,
+          })),
+        }),
       );
-      results.push(['consolidated_sections', consSections.length]);
-    }
 
-    if (newArticles.length) {
-      await insertInBatches(
-        newArticles.map((a) => articleSuggestionToRow(a, fx.slug)),
-        (chunk) => db.insert(newArticleSuggestions).values(chunk),
-      );
-      results.push(['new_article_suggestions', newArticles.length]);
-    }
-
-    if (updateArticles.length) {
-      await insertInBatches(
-        updateArticles.map((a) => articleSuggestionToRow(a, fx.slug)),
-        (chunk) => db.insert(articleUpdateSuggestions).values(chunk),
-      );
-      results.push(['article_update_suggestions', updateArticles.length]);
-    }
-
-    if (icd10.length) {
-      await insertInBatches(
-        icd10.map((c) => icdToRow(c, fx.slug, icd10Codes)),
-        (chunk) => db.insert(icd10Codes).values(chunk),
-      );
-      results.push(['icd10_codes', icd10.length]);
-    }
-
-    if (hcup.length) {
-      await insertInBatches(
-        hcup.map((c) => icdToRow(c, fx.slug, hcupCodes)),
-        (chunk) => db.insert(hcupCodes).values(chunk),
-      );
-      results.push(['hcup_codes', hcup.length]);
-    }
-
-    if (abim.length) {
-      await insertInBatches(
-        abim.map((c) => abimToRow(c, fx.slug)),
-        (chunk) => db.insert(abimCodes).values(chunk),
-      );
-      results.push(['abim_codes', abim.length]);
-    }
-
-    if (orpha.length) {
-      await insertInBatches(
-        orpha.map((c) => orphaToRow(c, fx.slug)),
-        (chunk) => db.insert(orphaCodes).values(chunk),
-      );
-      results.push(['orpha_codes', orpha.length]);
-    }
-
-    await db.insert(specialtyStats).values(statsToRow(stats, fx.slug));
-
-    for (const [name, count] of results) {
-      console.log(`   ${name.padEnd(32)} ${count.toLocaleString()}`);
+    const counts: Array<[string, number]> = [
+      ['icd10_codes', icd10.length],
+      ['hcup_codes', hcup.length],
+      ['abim_codes', abim.length],
+      ['orpha_codes', orpha.length],
+    ];
+    for (const [name, count] of counts) {
+      if (count > 0) console.log(`   ${name.padEnd(20)} ${count.toLocaleString()}`);
     }
   }
 

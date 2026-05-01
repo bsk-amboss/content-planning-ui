@@ -1,10 +1,7 @@
 import { fetchQuery } from 'convex/nextjs';
 import { connection } from 'next/server';
-import { getRepositories } from '@/lib/repositories';
 import type { Specialty } from '@/lib/repositories/types';
 import { api } from '../../../convex/_generated/api';
-
-export type Backend = 'postgres' | 'sheets' | 'xlsx';
 
 // Specialties live in Convex now. SSR pages call these helpers and get a
 // snapshot via `fetchQuery`; client components that mount inside the page
@@ -64,15 +61,4 @@ export async function getMilestones(slug: string): Promise<string | null> {
   await connection();
   const row = await fetchQuery(api.specialties.get, { slug });
   return row?.milestones ?? null;
-}
-
-/**
- * Resolves which backend is actually serving a specialty's data. In `postgres`
- * mode everything goes through Neon; in legacy mode the upstream source (xlsx
- * vs sheets) doubles as the runtime backend.
- */
-export function getBackend(specialty: { source: 'sheets' | 'xlsx' }): Backend {
-  const { mode } = getRepositories();
-  if (mode === 'postgres') return 'postgres';
-  return specialty.source;
 }

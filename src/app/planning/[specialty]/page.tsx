@@ -34,10 +34,5 @@ async function OverviewData({ slug }: { slug: string }) {
     { label: 'Consolidated sections', value: counts.consolidatedSections },
   ];
 
-  const note =
-    counts.totalCodes !== undefined
-      ? `Stats tab: total ${counts.totalCodes} · completed mappings ${counts.completedMappings ?? 0}.`
-      : undefined;
-
-  return <OverviewView stats={statItems} note={note} />;
+  return <OverviewView stats={statItems} />;
 }

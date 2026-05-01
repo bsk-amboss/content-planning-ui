@@ -1,19 +1,7 @@
 import { fetchQuery } from 'convex/nextjs';
-import { and, desc, eq, sql } from 'drizzle-orm';
 import { connection } from 'next/server';
 import { hydrateCodes } from '@/lib/convex-blobs';
-import { getDb } from '@/lib/db';
-import { pipelineRuns, pipelineStages } from '@/lib/db/schema';
 import { api } from '../../../convex/_generated/api';
-
-// Codes themselves live in Convex now (see `convex/codes.ts`). The pipeline
-// dashboard still needs a couple of derived numbers — the unmapped-count
-// badge, the category dropdown, and the unmapped-code autocomplete — and
-// those reuse the Convex queries via SSR `fetchQuery`.
-//
-// `getConsolidationLockState` stays Postgres-served because pipeline state
-// lives in `pipeline_stages` (Vercel Workflow durability) — the consolidation
-// lock is derived from the most recent `consolidate_primary` stage row.
 
 /**
  * How many codes for this specialty haven't been mapped yet (`isInAMBOSS`
@@ -52,32 +40,13 @@ export async function listUnmappedCodesForPicker(
  *
  * Locked when the most recent `consolidate_primary` stage for this specialty
  * is in any state other than `pending`/`skipped` — i.e. the run has started,
- * is awaiting approval, succeeded, or failed without being reset. Absent row
- * or `pending`/`skipped` → unlocked.
+ * is awaiting approval, succeeded, or failed without being reset.
  */
 export async function getConsolidationLockState(
   slug: string,
 ): Promise<{ locked: boolean; status: string | null }> {
-  const db = getDb();
-  const [row] = await db
-    .select({ status: pipelineStages.status })
-    .from(pipelineStages)
-    .innerJoin(pipelineRuns, eq(pipelineStages.runId, pipelineRuns.id))
-    .where(
-      and(
-        eq(pipelineRuns.specialtySlug, slug),
-        eq(pipelineStages.stage, 'consolidate_primary'),
-      ),
-    )
-    .orderBy(
-      desc(
-        sql`COALESCE(${pipelineStages.finishedAt}, ${pipelineStages.startedAt}, ${pipelineRuns.startedAt})`,
-      ),
-    )
-    .limit(1);
-  const status = row?.status ?? null;
-  const locked = status !== null && status !== 'pending' && status !== 'skipped';
-  return { locked, status };
+  await connection();
+  return await fetchQuery(api.pipeline.getConsolidationLockState, { slug });
 }
 
 export type CodeCategorySummary = {
@@ -89,15 +58,10 @@ export type CodeCategorySummary = {
 /**
  * Per-category code counts for a specialty — used by the Start-mapping form
  * to populate the multi-select dropdown and compute live totals as the user
- * narrows the filter. Uncategorized rows surface under the synthetic
- * `"(uncategorized)"` label so they remain selectable.
+ * narrows the filter.
  */
 export async function listCodeCategories(slug: string): Promise<CodeCategorySummary[]> {
   await connection();
-  // Fetched from Convex (the `codes` table is reactive there) and aggregated
-  // in JS rather than via SQL. For our row counts (low thousands) this is
-  // cheap; if the table grows by an order of magnitude we'd switch to a
-  // maintained-counter pattern instead.
   const rows = hydrateCodes(await fetchQuery(api.codes.list, { slug }));
   const totals = new Map<string, { total: number; unmapped: number }>();
   for (const r of rows) {
