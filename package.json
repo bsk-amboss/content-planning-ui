@@ -26,6 +26,8 @@
     "@ai-sdk/google": "^3.0.64",
     "@ai-sdk/mcp": "^1.0.36",
     "@amboss/design-system": "^3.42.2",
+    "@auth/core": "^0.37.0",
+    "@convex-dev/auth": "^0.0.92",
     "@emotion/cache": "^11.14.0",
     "@emotion/is-prop-valid": "^1.4.0",
     "@emotion/react": "^11.14.0",
