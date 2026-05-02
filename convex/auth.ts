@@ -2,10 +2,14 @@ import { Password } from '@convex-dev/auth/providers/Password';
 import { convexAuth } from '@convex-dev/auth/server';
 import { ConvexError } from 'convex/values';
 import type { DataModel } from './_generated/dataModel';
+import { ResendOTP } from './ResendOTP';
+import { ResendOTPPasswordReset } from './ResendOTPPasswordReset';
 
 const ALLOWED_EMAIL_DOMAINS = new Set(['amboss.com', 'medicuja.com', 'miamed.de']);
 
 const PasswordWithDomainCheck = Password<DataModel>({
+  verify: ResendOTP,
+  reset: ResendOTPPasswordReset,
   profile(params) {
     const email = String(params.email ?? '')
       .trim()

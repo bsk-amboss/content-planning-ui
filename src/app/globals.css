@@ -22,8 +22,24 @@ body {
 .primary-nav-content {
   display: flex;
   align-items: flex-end;
+  justify-content: space-between;
   height: 56px;
   padding: 0 16px;
+}
+
+/* The user menu sits inside .primary-nav-content alongside the logo+nav,
+   but visually we want it vertically centered in the 56px row rather than
+   anchored to the bottom edge like the nav-item baseline. align-self
+   overrides the parent's align-items for just this child. */
+.primary-nav-user {
+  align-self: center;
+}
+
+/* When unauthenticated there is no secondary-nav row below, so anchoring
+   the lone logo to flex-end leaves it dropped to the bottom edge with no
+   visual context. Center it within the 56px row instead. */
+.primary-nav-content--solo {
+  align-items: center;
 }
 
 .nav-fixed {

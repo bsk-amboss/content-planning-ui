@@ -1,8 +1,20 @@
 'use client';
 
-import { Box, Inline, Logo, NavBar, NavBarName } from '@amboss/design-system';
+import {
+  Avatar,
+  Box,
+  Inline,
+  Link,
+  Logo,
+  NavBar,
+  NavBarName,
+  Text,
+} from '@amboss/design-system';
+import { useAuthActions } from '@convex-dev/auth/react';
+import { useConvexAuth, useQuery } from 'convex/react';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
+import { api } from '../../convex/_generated/api';
 
 const NAV_ITEMS = [
   { label: 'Home', href: '/' },
@@ -28,9 +40,44 @@ function useScrollCompact() {
   return isCompact;
 }
 
+function UserMenu() {
+  const { isAuthenticated } = useConvexAuth();
+  const user = useQuery(api.users.getCurrentUser, isAuthenticated ? {} : 'skip');
+  const { signOut } = useAuthActions();
+
+  if (!isAuthenticated || !user?.email) return null;
+
+  const localPart = user.email.split('@')[0] ?? user.email;
+
+  return (
+    <Inline space="s" vAlignItems="center" noWrap>
+      <Avatar label={localPart} color="brand" />
+      <Text size="xs" weight="bold">
+        {localPart}
+      </Text>
+      <Text color="secondary">·</Text>
+      <Link
+        as="button"
+        type="button"
+        color="tertiary"
+        onClick={async () => {
+          await signOut();
+          // Hard navigation — same reason as the post-sign-in case in
+          // src/app/login/page.tsx: guarantees the proxy reads the cleared
+          // cookie on the next request and avoids any stale-state flicker.
+          window.location.assign('/login');
+        }}
+      >
+        Sign out
+      </Link>
+    </Inline>
+  );
+}
+
 export function NavBarDynamic() {
   const pathname = usePathname() ?? '/';
   const isCompact = useScrollCompact();
+  const { isAuthenticated } = useConvexAuth();
   const activeIndex = Math.max(
     0,
     NAV_ITEMS.findIndex((item) =>
@@ -43,24 +90,37 @@ export function NavBarDynamic() {
   return (
     <NavBar subTheme={NavBarName.Learning} isCompact={isCompact}>
       <NavBar.PrimaryNavContainer>
-        <div className="primary-nav-content">
+        <div
+          className={
+            isAuthenticated
+              ? 'primary-nav-content'
+              : 'primary-nav-content primary-nav-content--solo'
+          }
+        >
           <Inline space="m" vAlignItems="center">
             <Logo href="/" ariaLabel="AMBOSS Content Planner — Home" />
-            <NavBar.PrimaryNav aria-label="Main navigation">
-              <NavBar.PrimaryNavItem label="Content Planner" href="/" isActive />
-            </NavBar.PrimaryNav>
+            {isAuthenticated && (
+              <NavBar.PrimaryNav aria-label="Main navigation">
+                <NavBar.PrimaryNavItem label="Content Planner" href="/" isActive />
+              </NavBar.PrimaryNav>
+            )}
           </Inline>
+          <div className="primary-nav-user">
+            <UserMenu />
+          </div>
         </div>
       </NavBar.PrimaryNavContainer>
-      <NavBar.SubMenuContainer>
-        <Box space="m" vSpace="zero">
-          <NavBar.SecondaryNav
-            aria-label="Secondary navigation"
-            items={NAV_ITEMS}
-            activeIndex={activeIndex}
-          />
-        </Box>
-      </NavBar.SubMenuContainer>
+      {isAuthenticated && (
+        <NavBar.SubMenuContainer>
+          <Box space="m" vSpace="zero">
+            <NavBar.SecondaryNav
+              aria-label="Secondary navigation"
+              items={NAV_ITEMS}
+              activeIndex={activeIndex}
+            />
+          </Box>
+        </NavBar.SubMenuContainer>
+      )}
     </NavBar>
   );
 }
