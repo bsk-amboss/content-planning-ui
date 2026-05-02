@@ -54,7 +54,9 @@ export default function LoginPage() {
           ? 'Email or password is incorrect.'
           : 'Could not create account — the email may already be registered.';
       }
-      if (/Could not verify code|verification code|verifier|Invalid code/i.test(err.message)) {
+      if (
+        /Could not verify code|verification code|verifier|Invalid code/i.test(err.message)
+      ) {
         return 'That code is invalid or expired. Try again or request a new one.';
       }
       return err.message;
@@ -215,7 +217,8 @@ export default function LoginPage() {
               <Stack space="xs">
                 <H1>Check your inbox</H1>
                 <Text color="secondary">
-                  We sent a 6-digit code to <strong>{email}</strong>. It expires in 10 minutes.
+                  We sent a 6-digit code to <strong>{email}</strong>. It expires in 10
+                  minutes.
                 </Text>
               </Stack>
 
@@ -281,7 +284,8 @@ export default function LoginPage() {
               <Stack space="xs">
                 <H1>Reset password</H1>
                 <Text color="secondary">
-                  Enter your email and we'll send you a 6-digit code to set a new password.
+                  Enter your email and we'll send you a 6-digit code to set a new
+                  password.
                 </Text>
               </Stack>
 
@@ -333,7 +337,8 @@ export default function LoginPage() {
               <Stack space="xs">
                 <H1>Set a new password</H1>
                 <Text color="secondary">
-                  We sent a 6-digit code to <strong>{email}</strong>. Enter it along with the password you want to use from now on.
+                  We sent a 6-digit code to <strong>{email}</strong>. Enter it along with
+                  the password you want to use from now on.
                 </Text>
               </Stack>
 
@@ -417,7 +422,8 @@ export default function LoginPage() {
             <Stack space="xs">
               <H1>{flow === 'signIn' ? 'Sign in' : 'Create account'}</H1>
               <Text color="secondary">
-                AMBOSS staff only — use your @amboss.com, @medicuja.com, or @miamed.de email.
+                AMBOSS staff only — use your @amboss.com, @medicuja.com, or @miamed.de
+                email.
               </Text>
             </Stack>
 
@@ -483,11 +489,7 @@ export default function LoginPage() {
                     {flow === 'signIn' ? 'Create account' : 'Have an account? Sign in'}
                   </Button>
                   <Button type="submit" disabled={submitting}>
-                    {submitting
-                      ? 'Working…'
-                      : flow === 'signIn'
-                        ? 'Sign in'
-                        : 'Sign up'}
+                    {submitting ? 'Working…' : flow === 'signIn' ? 'Sign in' : 'Sign up'}
                   </Button>
                 </Inline>
               </Stack>

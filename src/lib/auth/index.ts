@@ -1,4 +1,7 @@
-import { convexAuthNextjsToken, isAuthenticatedNextjs } from '@convex-dev/auth/nextjs/server';
+import {
+  convexAuthNextjsToken,
+  isAuthenticatedNextjs,
+} from '@convex-dev/auth/nextjs/server';
 import { fetchQuery } from 'convex/nextjs';
 import { api } from '../../../convex/_generated/api';
 

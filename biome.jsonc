@@ -54,6 +54,9 @@
       "a11y": {
         "recommended": true
       },
+      "complexity": {
+        "noImportantStyles": "off"
+      },
       "correctness": {
         "noUnusedImports": "error",
         "useExhaustiveDependencies": "info"
