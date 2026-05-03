@@ -2,8 +2,8 @@
  * Refresh the local AMBOSS article/section catalog used by the mapping
  * workflow to validate cited IDs.
  *
- *   pnpm db:refresh-amboss-library -- path/to/export.json
- *   pnpm db:refresh-amboss-library -- path/to/export.json --prune
+ *   npm run refresh-amboss-library -- path/to/export.json
+ *   npm run refresh-amboss-library -- path/to/export.json --prune
  *
  * Expected JSON shape (the user's previous BigQuery → JSON export; if the
  * real file differs, adapt this loader):
@@ -60,7 +60,7 @@ async function main() {
   const pathArg = args.find((a) => !a.startsWith('--'));
   if (!pathArg) {
     console.error(
-      'usage: pnpm db:refresh-amboss-library -- path/to/export.json [--prune]',
+      'usage: npm run refresh-amboss-library -- path/to/export.json [--prune]',
     );
     process.exit(1);
   }

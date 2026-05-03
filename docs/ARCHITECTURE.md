@@ -165,7 +165,7 @@ mapping/
 
 ### Scripts (`scripts/`)
 
-CLI tools run locally with `pnpm <script>`. All authenticate to Convex via `_lib/convex.ts` which injects `WORKFLOW_SECRET`.
+CLI tools run locally with `npm run <script>`. All authenticate to Convex via `_lib/convex.ts` which injects `WORKFLOW_SECRET`.
 
 | Script | Purpose |
 |---|---|
