@@ -7,7 +7,6 @@ import './globals.css';
 import { ConvexProviders } from './convex-providers';
 import { EmotionRegistry } from './emotion-registry';
 import { NavShell } from './nav-shell';
-import { QueryProviders } from './query-providers';
 
 export const metadata: Metadata = {
   title: {
@@ -47,11 +46,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Suspense>
           <ConvexAuthNextjsServerProvider>
             <EmotionRegistry>
-              <QueryProviders>
-                <ConvexProviders>
-                  <NavShell>{children}</NavShell>
-                </ConvexProviders>
-              </QueryProviders>
+              <ConvexProviders>
+                <NavShell>{children}</NavShell>
+              </ConvexProviders>
             </EmotionRegistry>
           </ConvexAuthNextjsServerProvider>
         </Suspense>
