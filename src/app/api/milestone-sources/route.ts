@@ -7,6 +7,7 @@
 
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
+import { requireUserResponse } from '@/lib/auth';
 import {
   createMilestoneSource,
   listMilestoneSources,
@@ -15,11 +16,15 @@ import {
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
 export async function GET() {
+  const guard = await requireUserResponse();
+  if (guard) return guard;
   const rows = await listMilestoneSources();
   return NextResponse.json({ sources: rows });
 }
 
 export async function POST(req: NextRequest) {
+  const guard = await requireUserResponse();
+  if (guard) return guard;
   const body = (await req.json().catch(() => ({}))) as {
     slug?: unknown;
     name?: unknown;

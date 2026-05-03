@@ -8,8 +8,11 @@
 
 import { type HandleUploadBody, handleUpload } from '@vercel/blob/client';
 import { type NextRequest, NextResponse } from 'next/server';
+import { requireUserResponse } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
+  const guard = await requireUserResponse();
+  if (guard) return guard;
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     return NextResponse.json(
       {

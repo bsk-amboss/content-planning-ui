@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
+import { requireUserOrService, serviceSecretArg } from './_lib/access';
 
 // All three tables (consolidatedArticles, newArticleSuggestions,
 // articleUpdateSuggestions) share the same access shape: list-by-specialty,
@@ -13,8 +14,9 @@ import { mutation, query } from './_generated/server';
 // --- consolidatedArticles ---------------------------------------------------
 
 export const listConsolidated = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     return await ctx.db
       .query('consolidatedArticles')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -34,15 +36,18 @@ export const patchConsolidated = mutation({
       overallCoverage: v.optional(v.number()),
       overallImportance: v.optional(v.number()),
     }),
+    _secret: serviceSecretArg,
   },
-  handler: async (ctx, { id, fields }) => {
+  handler: async (ctx, { id, fields, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     await ctx.db.patch(id, fields);
   },
 });
 
 export const bulkInsertConsolidated = mutation({
-  args: { slug: v.string(), rows: v.array(v.any()) },
-  handler: async (ctx, { slug, rows }) => {
+  args: { slug: v.string(), rows: v.array(v.any()), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, rows, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     for (const r of rows) {
       await ctx.db.insert('consolidatedArticles', { specialtySlug: slug, ...r });
     }
@@ -50,8 +55,9 @@ export const bulkInsertConsolidated = mutation({
 });
 
 export const deleteConsolidatedForSpecialty = mutation({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db
       .query('consolidatedArticles')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -63,8 +69,9 @@ export const deleteConsolidatedForSpecialty = mutation({
 // --- newArticleSuggestions --------------------------------------------------
 
 export const listNew = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     return await ctx.db
       .query('newArticleSuggestions')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -86,15 +93,18 @@ export const patchNew = mutation({
       verdict: v.optional(v.string()),
       justification: v.optional(v.string()),
     }),
+    _secret: serviceSecretArg,
   },
-  handler: async (ctx, { id, fields }) => {
+  handler: async (ctx, { id, fields, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     await ctx.db.patch(id, fields);
   },
 });
 
 export const bulkInsertNew = mutation({
-  args: { slug: v.string(), rows: v.array(v.any()) },
-  handler: async (ctx, { slug, rows }) => {
+  args: { slug: v.string(), rows: v.array(v.any()), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, rows, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     for (const r of rows) {
       await ctx.db.insert('newArticleSuggestions', { specialtySlug: slug, ...r });
     }
@@ -102,8 +112,9 @@ export const bulkInsertNew = mutation({
 });
 
 export const deleteNewForSpecialty = mutation({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db
       .query('newArticleSuggestions')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -115,8 +126,9 @@ export const deleteNewForSpecialty = mutation({
 // --- articleUpdateSuggestions -----------------------------------------------
 
 export const listUpdates = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     return await ctx.db
       .query('articleUpdateSuggestions')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -135,15 +147,18 @@ export const patchUpdate = mutation({
       verdict: v.optional(v.string()),
       justification: v.optional(v.string()),
     }),
+    _secret: serviceSecretArg,
   },
-  handler: async (ctx, { id, fields }) => {
+  handler: async (ctx, { id, fields, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     await ctx.db.patch(id, fields);
   },
 });
 
 export const bulkInsertUpdates = mutation({
-  args: { slug: v.string(), rows: v.array(v.any()) },
-  handler: async (ctx, { slug, rows }) => {
+  args: { slug: v.string(), rows: v.array(v.any()), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, rows, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     for (const r of rows) {
       await ctx.db.insert('articleUpdateSuggestions', { specialtySlug: slug, ...r });
     }
@@ -151,8 +166,9 @@ export const bulkInsertUpdates = mutation({
 });
 
 export const deleteUpdatesForSpecialty = mutation({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db
       .query('articleUpdateSuggestions')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))

@@ -13,10 +13,9 @@
 
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { ConvexHttpClient } from 'convex/browser';
-import { env } from '@/env';
 import { createXlsxRepos } from '@/lib/repositories/xlsx/repos';
 import { api } from '../convex/_generated/api';
+import { convexClient } from './_lib/convex';
 
 const CHUNK = 100;
 const THROTTLE_MS = 250;
@@ -52,15 +51,13 @@ async function chunked<T>(rows: T[], size: number, fn: (chunk: T[]) => Promise<u
 }
 
 async function main() {
-  if (!env.NEXT_PUBLIC_CONVEX_URL) throw new Error('NEXT_PUBLIC_CONVEX_URL is not set');
-
   const fixtures = parseFixturesEnv();
   if (fixtures.length === 0) {
     console.error('No xlsx fixtures found. Nothing to seed.');
     process.exit(1);
   }
 
-  const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
+  const convex = convexClient();
   const xlsxRepos = createXlsxRepos(fixtures);
 
   for (const fx of fixtures) {

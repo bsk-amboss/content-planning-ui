@@ -1,5 +1,5 @@
-import { fetchQuery } from 'convex/nextjs';
 import { connection } from 'next/server';
+import { fetchQueryAsUser } from '@/lib/convex/server';
 import { hydrateCodes } from '@/lib/convex-blobs';
 import { api } from '../../../convex/_generated/api';
 
@@ -9,7 +9,7 @@ import { api } from '../../../convex/_generated/api';
  */
 export async function listUnmappedCodeCount(slug: string): Promise<number> {
   await connection();
-  const rows = await fetchQuery(api.codes.listUnmapped, { slug });
+  const rows = await fetchQueryAsUser(api.codes.listUnmapped, { slug });
   return rows.length;
 }
 
@@ -28,7 +28,7 @@ export async function listUnmappedCodesForPicker(
   slug: string,
 ): Promise<UnmappedCodePickerRow[]> {
   await connection();
-  const rows = await fetchQuery(api.codes.listUnmapped, { slug });
+  const rows = await fetchQueryAsUser(api.codes.listUnmapped, { slug });
   return rows
     .map((r) => ({ code: r.code, description: r.description, category: r.category }))
     .sort((a, b) => a.code.localeCompare(b.code));
@@ -46,7 +46,7 @@ export async function getConsolidationLockState(
   slug: string,
 ): Promise<{ locked: boolean; status: string | null }> {
   await connection();
-  return await fetchQuery(api.pipeline.getConsolidationLockState, { slug });
+  return await fetchQueryAsUser(api.pipeline.getConsolidationLockState, { slug });
 }
 
 export type CodeCategorySummary = {
@@ -62,7 +62,7 @@ export type CodeCategorySummary = {
  */
 export async function listCodeCategories(slug: string): Promise<CodeCategorySummary[]> {
   await connection();
-  const rows = hydrateCodes(await fetchQuery(api.codes.list, { slug }));
+  const rows = hydrateCodes(await fetchQueryAsUser(api.codes.list, { slug }));
   const totals = new Map<string, { total: number; unmapped: number }>();
   for (const r of rows) {
     const cat = r.category ?? '(uncategorized)';

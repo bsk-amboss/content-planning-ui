@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
+import { requireUserOrService, serviceSecretArg } from './_lib/access';
 
 // Note: the JSON-stringified blob fields (`articlesWhereCoverageIs`,
 // `existingArticleUpdates`, `newArticlesNeeded`) are returned to clients
@@ -14,8 +15,9 @@ import { mutation, query } from './_generated/server';
  * whenever any code in the specialty is inserted, updated, or deleted.
  */
 export const list = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     return await ctx.db
       .query('codes')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -28,8 +30,9 @@ export const list = query({
  * than relying on the list payload.
  */
 export const get = query({
-  args: { slug: v.string(), code: v.string() },
-  handler: async (ctx, { slug, code }) => {
+  args: { slug: v.string(), code: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, code, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     return await ctx.db
       .query('codes')
       .withIndex('by_specialty_code', (q) => q.eq('specialtySlug', slug).eq('code', code))
@@ -44,8 +47,9 @@ export const get = query({
  * mutations cause this query to re-fire on every connected client.
  */
 export const inFlight = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db
       .query('mappingsInFlight')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -65,8 +69,10 @@ export const listUnmapped = query({
     slug: v.string(),
     categories: v.optional(v.array(v.string())),
     codes: v.optional(v.array(v.string())),
+    _secret: serviceSecretArg,
   },
-  handler: async (ctx, { slug, categories, codes }) => {
+  handler: async (ctx, { slug, categories, codes, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db
       .query('codes')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -103,8 +109,10 @@ export const patch = mutation({
       category: v.optional(v.string()),
       consolidationCategory: v.optional(v.string()),
     }),
+    _secret: serviceSecretArg,
   },
-  handler: async (ctx, { slug, code, fields }) => {
+  handler: async (ctx, { slug, code, fields, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const row = await ctx.db
       .query('codes')
       .withIndex('by_specialty_code', (q) => q.eq('specialtySlug', slug).eq('code', code))
@@ -134,8 +142,10 @@ export const writeMapping = mutation({
     articlesWhereCoverageIs: v.optional(v.string()),
     existingArticleUpdates: v.optional(v.string()),
     newArticlesNeeded: v.optional(v.string()),
+    _secret: serviceSecretArg,
   },
-  handler: async (ctx, { slug, code, ...mapping }) => {
+  handler: async (ctx, { slug, code, _secret, ...mapping }) => {
+    await requireUserOrService(ctx, _secret);
     const row = await ctx.db
       .query('codes')
       .withIndex('by_specialty_code', (q) => q.eq('specialtySlug', slug).eq('code', code))
@@ -158,8 +168,9 @@ export const writeMapping = mutation({
  * are already unmapped. Also drops any in-flight markers for the specialty.
  */
 export const clearAllMappingsForSpecialty = mutation({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db
       .query('codes')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -192,8 +203,9 @@ export const clearAllMappingsForSpecialty = mutation({
  * workflow).
  */
 export const clearMapping = mutation({
-  args: { slug: v.string(), code: v.string() },
-  handler: async (ctx, { slug, code }) => {
+  args: { slug: v.string(), code: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, code, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const row = await ctx.db
       .query('codes')
       .withIndex('by_specialty_code', (q) => q.eq('specialtySlug', slug).eq('code', code))
@@ -221,8 +233,9 @@ export const clearMapping = mutation({
  * expected to have cleared the specialty first (see deleteForSpecialty).
  */
 export const bulkInsert = mutation({
-  args: { slug: v.string(), rows: v.array(v.any()) },
-  handler: async (ctx, { slug, rows }) => {
+  args: { slug: v.string(), rows: v.array(v.any()), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, rows, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     for (const r of rows) {
       await ctx.db.insert('codes', { specialtySlug: slug, ...r });
     }
@@ -235,8 +248,9 @@ export const bulkInsert = mutation({
  * specialty along with any in-flight markers.
  */
 export const deleteForSpecialty = mutation({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const codes = await ctx.db
       .query('codes')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -256,8 +270,14 @@ export const deleteForSpecialty = mutation({
  * both clear the marker.
  */
 export const markInFlight = mutation({
-  args: { slug: v.string(), codes: v.array(v.string()), runId: v.string() },
-  handler: async (ctx, { slug, codes, runId }) => {
+  args: {
+    slug: v.string(),
+    codes: v.array(v.string()),
+    runId: v.string(),
+    _secret: serviceSecretArg,
+  },
+  handler: async (ctx, { slug, codes, runId, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const startedAt = Date.now();
     for (const code of codes) {
       await ctx.db.insert('mappingsInFlight', {
@@ -276,8 +296,9 @@ export const markInFlight = mutation({
  * `writeMapping`.
  */
 export const clearInFlightForRun = mutation({
-  args: { runId: v.string() },
-  handler: async (ctx, { runId }) => {
+  args: { runId: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { runId, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db
       .query('mappingsInFlight')
       .withIndex('by_run', (q) => q.eq('runId', runId))

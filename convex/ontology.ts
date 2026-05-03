@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
+import { requireUserOrService, serviceSecretArg } from './_lib/access';
 
 // Read-only ontology tables (ICD-10 / HCUP / ABIM / Orpha). Per-specialty
 // indexes; UI reads everything for a given specialty in one call. Refresh
@@ -38,44 +39,53 @@ const orphaRow = v.object({
 });
 
 export const listIcd10 = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) =>
-    await ctx.db
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
+    return await ctx.db
       .query('icd10Codes')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
-      .collect(),
+      .collect();
+  },
 });
 
 export const listHcup = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) =>
-    await ctx.db
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
+    return await ctx.db
       .query('hcupCodes')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
-      .collect(),
+      .collect();
+  },
 });
 
 export const listAbim = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) =>
-    await ctx.db
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
+    return await ctx.db
       .query('abimCodes')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
-      .collect(),
+      .collect();
+  },
 });
 
 export const listOrpha = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) =>
-    await ctx.db
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
+    return await ctx.db
       .query('orphaCodes')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
-      .collect(),
+      .collect();
+  },
 });
 
 export const clearIcd10ForSpecialty = mutation({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db
       .query('icd10Codes')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -85,8 +95,9 @@ export const clearIcd10ForSpecialty = mutation({
 });
 
 export const clearHcupForSpecialty = mutation({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db
       .query('hcupCodes')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -96,8 +107,9 @@ export const clearHcupForSpecialty = mutation({
 });
 
 export const clearAbimForSpecialty = mutation({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db
       .query('abimCodes')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -107,8 +119,9 @@ export const clearAbimForSpecialty = mutation({
 });
 
 export const clearOrphaForSpecialty = mutation({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db
       .query('orphaCodes')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -118,30 +131,34 @@ export const clearOrphaForSpecialty = mutation({
 });
 
 export const bulkInsertIcd10 = mutation({
-  args: { slug: v.string(), rows: v.array(icdRow) },
-  handler: async (ctx, { slug, rows }) => {
+  args: { slug: v.string(), rows: v.array(icdRow), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, rows, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     for (const r of rows)
       await ctx.db.insert('icd10Codes', { specialtySlug: slug, ...r });
   },
 });
 
 export const bulkInsertHcup = mutation({
-  args: { slug: v.string(), rows: v.array(icdRow) },
-  handler: async (ctx, { slug, rows }) => {
+  args: { slug: v.string(), rows: v.array(icdRow), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, rows, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     for (const r of rows) await ctx.db.insert('hcupCodes', { specialtySlug: slug, ...r });
   },
 });
 
 export const bulkInsertAbim = mutation({
-  args: { slug: v.string(), rows: v.array(abimRow) },
-  handler: async (ctx, { slug, rows }) => {
+  args: { slug: v.string(), rows: v.array(abimRow), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, rows, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     for (const r of rows) await ctx.db.insert('abimCodes', { specialtySlug: slug, ...r });
   },
 });
 
 export const bulkInsertOrpha = mutation({
-  args: { slug: v.string(), rows: v.array(orphaRow) },
-  handler: async (ctx, { slug, rows }) => {
+  args: { slug: v.string(), rows: v.array(orphaRow), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, rows, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     for (const r of rows)
       await ctx.db.insert('orphaCodes', { specialtySlug: slug, ...r });
   },

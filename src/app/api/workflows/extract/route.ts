@@ -15,10 +15,11 @@
  *   3. Call `start(extractCodesWorkflow, ...)` and record the workflow run id.
  */
 
-import { fetchMutation, fetchQuery } from 'convex/nextjs';
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
 import { start } from 'workflow/api';
+import { requireUserResponse } from '@/lib/auth';
+import { fetchMutationAsUser, fetchQueryAsUser } from '@/lib/convex/server';
 import { listCodeSources } from '@/lib/data/code-sources';
 import { approvalToken } from '@/lib/workflows/lib/approval';
 import { extractCodesWorkflow } from '@/lib/workflows/preprocessing/extract-codes';
@@ -33,6 +34,8 @@ type Body = {
 };
 
 export async function POST(req: NextRequest) {
+  const guard = await requireUserResponse();
+  if (guard) return guard;
   const body = (await req.json().catch(() => ({}))) as Body;
   const slug = body.specialtySlug;
   if (!slug) {
@@ -46,7 +49,7 @@ export async function POST(req: NextRequest) {
   }
   const inputs = parsed;
 
-  const spec = await fetchQuery(api.specialties.get, { slug });
+  const spec = await fetchQueryAsUser(api.specialties.get, { slug });
   if (!spec) {
     return NextResponse.json({ error: `specialty not found: ${slug}` }, { status: 404 });
   }
@@ -54,10 +57,10 @@ export async function POST(req: NextRequest) {
   const identifyInstructions = body.identifyModulesInstructions?.trim() || null;
   const extractInstructions = body.extractCodesInstructions?.trim() || null;
 
-  const { id: runId } = await fetchMutation(api.pipeline.createRun, {
+  const { id: runId } = await fetchMutationAsUser(api.pipeline.createRun, {
     specialtySlug: slug,
   });
-  await fetchMutation(api.pipeline.updateRun, {
+  await fetchMutationAsUser(api.pipeline.updateRun, {
     runId,
     patch: {
       contentOutlineUrls: JSON.stringify(inputs),
@@ -67,7 +70,7 @@ export async function POST(req: NextRequest) {
       ...(extractInstructions ? { extractCodesInstructions: extractInstructions } : {}),
     },
   });
-  await fetchMutation(api.pipeline.initStage, { runId, stage: 'extract_codes' });
+  await fetchMutationAsUser(api.pipeline.initStage, { runId, stage: 'extract_codes' });
 
   const wfRun = await start(extractCodesWorkflow, [
     {
@@ -79,7 +82,7 @@ export async function POST(req: NextRequest) {
     },
   ]);
 
-  await fetchMutation(api.pipeline.updateRun, {
+  await fetchMutationAsUser(api.pipeline.updateRun, {
     runId,
     patch: { workflowRunId: wfRun.runId },
   });

@@ -2,10 +2,11 @@
  * Internal cache-invalidation endpoint.
  *
  * Called from the workflow sandbox (which cannot `revalidateTag` directly) via
- * the `revalidateSpecialtyCache` step. POST `{ tags: string[], secret?: string }`.
+ * the `revalidateSpecialtyCache` step. POST `{ tags: string[], secret: string }`.
  *
- * If `INTERNAL_REVALIDATE_SECRET` is set in the environment, the body `secret`
- * must match. Unset = dev-mode (no guard).
+ * `INTERNAL_REVALIDATE_SECRET` is required in production — without it the
+ * endpoint refuses every request. Outside production, an unset secret falls
+ * back to dev-mode (no guard) so local workflows still bust cache tags.
  */
 
 import { revalidateTag } from 'next/cache';
@@ -19,6 +20,12 @@ type Body = {
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as Body;
   const expected = process.env.INTERNAL_REVALIDATE_SECRET;
+  if (process.env.NODE_ENV === 'production' && !expected) {
+    console.error(
+      '[internal-revalidate] INTERNAL_REVALIDATE_SECRET unset in production — refusing',
+    );
+    return NextResponse.json({ error: 'misconfigured' }, { status: 500 });
+  }
   if (expected && body.secret !== expected) {
     console.warn('[internal-revalidate] rejected: bad secret');
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });

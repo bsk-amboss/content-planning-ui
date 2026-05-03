@@ -51,6 +51,7 @@ export const env = createEnv({
     ANTHROPIC_API_KEY: optionalString,
     BLOB_READ_WRITE_TOKEN: optionalString,
     INTERNAL_REVALIDATE_SECRET: optionalString,
+    WORKFLOW_SECRET: optionalString,
     CONVEX_DEPLOYMENT: optionalString,
   },
   client: {
@@ -68,6 +69,7 @@ export const env = createEnv({
     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
     BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN,
     INTERNAL_REVALIDATE_SECRET: process.env.INTERNAL_REVALIDATE_SECRET,
+    WORKFLOW_SECRET: process.env.WORKFLOW_SECRET,
     CONVEX_DEPLOYMENT: process.env.CONVEX_DEPLOYMENT,
     NEXT_PUBLIC_CONVEX_URL: process.env.NEXT_PUBLIC_CONVEX_URL,
   },

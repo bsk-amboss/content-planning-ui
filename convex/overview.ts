@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { query } from './_generated/server';
+import { requireUserOrService, serviceSecretArg } from './_lib/access';
 
 /**
  * Counts driving the specialty Overview cards. Convex doesn't have a cheap
@@ -13,8 +14,9 @@ import { query } from './_generated/server';
  * stitches them in.
  */
 export const counts = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const [codes, categories, consolidated, newArticles, sections] = await Promise.all([
       ctx.db
         .query('codes')
@@ -41,7 +43,10 @@ export const counts = query({
     // false). Matches the codes-table footer in `codes-view.tsx`. Don't gate on
     // coverageLevel — for codes that aren't in AMBOSS the LLM often returns an
     // empty coverageLevel, which writeCodeMapping persists as undefined.
-    const mappedCodes = codes.reduce((n, c) => (c.isInAMBOSS === undefined ? n : n + 1), 0);
+    const mappedCodes = codes.reduce(
+      (n, c) => (c.isInAMBOSS === undefined ? n : n + 1),
+      0,
+    );
     return {
       codes: codes.length,
       mappedCodes,

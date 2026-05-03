@@ -1,5 +1,5 @@
-import { fetchQuery } from 'convex/nextjs';
 import { connection } from 'next/server';
+import { fetchQueryAsUser } from '@/lib/convex/server';
 import { api } from '../../../convex/_generated/api';
 
 export interface OverviewCounts {
@@ -18,5 +18,5 @@ export interface OverviewCounts {
  */
 export async function getOverviewCounts(slug: string): Promise<OverviewCounts> {
   await connection();
-  return await fetchQuery(api.overview.counts, { slug });
+  return await fetchQueryAsUser(api.overview.counts, { slug });
 }

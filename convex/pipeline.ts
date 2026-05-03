@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import type { Doc } from './_generated/dataModel';
 import { mutation, query } from './_generated/server';
+import { requireUserOrService, serviceSecretArg } from './_lib/access';
 
 // Pipeline state. Workflow code (`'use step'` blocks under
 // src/lib/workflows/) calls these mutations to persist run/stage progression
@@ -14,8 +15,9 @@ const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 // ---------- Queries ---------------------------------------------------------
 
 export const getCurrentRun = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db
       .query('pipelineRuns')
       .withIndex('by_specialty_started', (q) => q.eq('specialtySlug', slug))
@@ -28,18 +30,21 @@ export const getCurrentRun = query({
 });
 
 export const listRuns = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) =>
-    await ctx.db
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
+    return await ctx.db
       .query('pipelineRuns')
       .withIndex('by_specialty_started', (q) => q.eq('specialtySlug', slug))
       .order('desc')
-      .collect(),
+      .collect();
+  },
 });
 
 export const getRun = query({
-  args: { runId: v.string() },
-  handler: async (ctx, { runId }) => {
+  args: { runId: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { runId, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const id = ctx.db.normalizeId('pipelineRuns', runId);
     if (!id) return null;
     return await ctx.db.get(id);
@@ -47,17 +52,20 @@ export const getRun = query({
 });
 
 export const listStages = query({
-  args: { runId: v.string() },
-  handler: async (ctx, { runId }) =>
-    await ctx.db
+  args: { runId: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { runId, _secret }) => {
+    await requireUserOrService(ctx, _secret);
+    return await ctx.db
       .query('pipelineStages')
       .withIndex('by_run', (q) => q.eq('runId', runId))
-      .collect(),
+      .collect();
+  },
 });
 
 export const listEvents = query({
-  args: { runId: v.string() },
-  handler: async (ctx, { runId }) => {
+  args: { runId: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { runId, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db
       .query('pipelineEvents')
       .withIndex('by_run', (q) => q.eq('runId', runId))
@@ -67,12 +75,14 @@ export const listEvents = query({
 });
 
 export const getStage = query({
-  args: { runId: v.string(), stage: v.string() },
-  handler: async (ctx, { runId, stage }) =>
-    await ctx.db
+  args: { runId: v.string(), stage: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { runId, stage, _secret }) => {
+    await requireUserOrService(ctx, _secret);
+    return await ctx.db
       .query('pipelineStages')
       .withIndex('by_run_stage', (q) => q.eq('runId', runId).eq('stage', stage))
-      .unique(),
+      .unique();
+  },
 });
 
 /**
@@ -81,8 +91,9 @@ export const getStage = query({
  * self-contained.
  */
 export const getLatestStageContexts = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const runs = await ctx.db
       .query('pipelineRuns')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -151,8 +162,9 @@ export const getLatestStageContexts = query({
 });
 
 export const getMapCodesHistory = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const runs = await ctx.db
       .query('pipelineRuns')
       .withIndex('by_specialty_started', (q) => q.eq('specialtySlug', slug))
@@ -185,8 +197,9 @@ export const getMapCodesHistory = query({
  * One-pass query: most recent run.status per specialty, for the home grid.
  */
 export const listSpecialtyPhases = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { _secret: serviceSecretArg },
+  handler: async (ctx, { _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const runs = await ctx.db.query('pipelineRuns').collect();
     const latest = new Map<string, { status: string; startedAt: number }>();
     for (const r of runs) {
@@ -202,12 +215,14 @@ export const listSpecialtyPhases = query({
 });
 
 export const listExtractedCodesForRun = query({
-  args: { runId: v.string() },
-  handler: async (ctx, { runId }) =>
-    await ctx.db
+  args: { runId: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { runId, _secret }) => {
+    await requireUserOrService(ctx, _secret);
+    return await ctx.db
       .query('extractedCodes')
       .withIndex('by_run', (q) => q.eq('runId', runId))
-      .collect(),
+      .collect();
+  },
 });
 
 /**
@@ -217,8 +232,9 @@ export const listExtractedCodesForRun = query({
  * stringified — no JSON-path operator).
  */
 export const getCodeRunMetadata = query({
-  args: { slug: v.string(), code: v.string() },
-  handler: async (ctx, { slug, code }) => {
+  args: { slug: v.string(), code: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, code, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const runs = await ctx.db
       .query('pipelineRuns')
       .withIndex('by_specialty_started', (q) => q.eq('specialtySlug', slug))
@@ -262,8 +278,9 @@ export const getCodeRunMetadata = query({
  * awaiting approval, completed, or failed without being reset).
  */
 export const getConsolidationLockState = query({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const runs = await ctx.db
       .query('pipelineRuns')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -290,8 +307,13 @@ export const getConsolidationLockState = query({
 // ---------- Mutations -------------------------------------------------------
 
 export const createRun = mutation({
-  args: { specialtySlug: v.string(), workflowRunId: v.optional(v.string()) },
-  handler: async (ctx, { specialtySlug, workflowRunId }) => {
+  args: {
+    specialtySlug: v.string(),
+    workflowRunId: v.optional(v.string()),
+    _secret: serviceSecretArg,
+  },
+  handler: async (ctx, { specialtySlug, workflowRunId, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const now = Date.now();
     const id = await ctx.db.insert('pipelineRuns', {
       specialtySlug,
@@ -321,8 +343,10 @@ export const updateRun = mutation({
       mappingCheckIds: v.optional(v.boolean()),
       mappingFilter: v.optional(v.string()),
     }),
+    _secret: serviceSecretArg,
   },
-  handler: async (ctx, { runId, patch }) => {
+  handler: async (ctx, { runId, patch, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const id = ctx.db.normalizeId('pipelineRuns', runId);
     if (!id) throw new Error(`run not found: ${runId}`);
     const cleaned: Record<string, unknown> = { updatedAt: Date.now() };
@@ -334,8 +358,9 @@ export const updateRun = mutation({
 });
 
 export const initStage = mutation({
-  args: { runId: v.string(), stage: v.string() },
-  handler: async (ctx, { runId, stage }) => {
+  args: { runId: v.string(), stage: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { runId, stage, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const id = await ctx.db.insert('pipelineStages', {
       runId,
       stage,
@@ -360,8 +385,10 @@ export const updateStage = mutation({
       draftPayload: v.optional(v.union(v.string(), v.null())),
       errorMessage: v.optional(v.union(v.string(), v.null())),
     }),
+    _secret: serviceSecretArg,
   },
-  handler: async (ctx, { runId, stage, patch }) => {
+  handler: async (ctx, { runId, stage, patch, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const row = await ctx.db
       .query('pipelineStages')
       .withIndex('by_run_stage', (q) => q.eq('runId', runId).eq('stage', stage))
@@ -382,8 +409,10 @@ export const logEvent = mutation({
     level: v.string(),
     message: v.string(),
     metrics: v.optional(v.string()),
+    _secret: serviceSecretArg,
   },
-  handler: async (ctx, { runId, stage, level, message, metrics }) => {
+  handler: async (ctx, { runId, stage, level, message, metrics, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     await ctx.db.insert('pipelineEvents', {
       runId,
       stage,
@@ -409,8 +438,10 @@ export const writeExtractedCodes = mutation({
     runId: v.string(),
     specialtySlug: v.string(),
     rows: v.array(extractedCodeRow),
+    _secret: serviceSecretArg,
   },
-  handler: async (ctx, { runId, specialtySlug, rows }) => {
+  handler: async (ctx, { runId, specialtySlug, rows, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const now = Date.now();
     for (const r of rows) {
       await ctx.db.insert('extractedCodes', {
@@ -427,8 +458,9 @@ export const writeExtractedCodes = mutation({
  * Cancel every non-terminal run for a specialty. Returns count cancelled.
  */
 export const cancelStaleRunsForSpecialty = mutation({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db
       .query('pipelineRuns')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
@@ -455,8 +487,9 @@ export const cancelStaleRunsForSpecialty = mutation({
  * caller's reset path — they're per-table and can run in parallel.
  */
 export const resetStage = mutation({
-  args: { runId: v.string(), stage: v.string() },
-  handler: async (ctx, { runId, stage }) => {
+  args: { runId: v.string(), stage: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { runId, stage, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const events = await ctx.db
       .query('pipelineEvents')
       .withIndex('by_run_stage_created', (q) => q.eq('runId', runId).eq('stage', stage))

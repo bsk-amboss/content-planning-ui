@@ -18,6 +18,7 @@
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
 import { resumeHook } from 'workflow/api';
+import { requireUserResponse } from '@/lib/auth';
 import { type ApprovableStage, approvalToken } from '@/lib/workflows/lib/approval';
 
 type Body = {
@@ -36,6 +37,8 @@ const APPROVABLE_STAGES: ReadonlySet<ApprovableStage> = new Set([
 ]);
 
 export async function POST(req: NextRequest) {
+  const guard = await requireUserResponse();
+  if (guard) return guard;
   const body = (await req.json().catch(() => ({}))) as Body;
   if (!body.runId) {
     return NextResponse.json({ error: 'runId required' }, { status: 400 });

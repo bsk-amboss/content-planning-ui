@@ -5,8 +5,8 @@
  * caches its own queries, so we no longer wrap with Next.js `'use cache'`.
  */
 
-import { fetchQuery } from 'convex/nextjs';
 import { connection } from 'next/server';
+import { fetchQueryAsUser } from '@/lib/convex/server';
 import { api } from '../../../convex/_generated/api';
 
 export type AmbossLibraryStats = {
@@ -17,19 +17,19 @@ export type AmbossLibraryStats = {
 
 export async function listAmbossArticleIds(): Promise<Set<string>> {
   await connection();
-  const ids = await fetchQuery(api.amboss.listArticleIds);
+  const ids = await fetchQueryAsUser(api.amboss.listArticleIds);
   return new Set(ids);
 }
 
 export async function listAmbossSectionIds(): Promise<Set<string>> {
   await connection();
-  const ids = await fetchQuery(api.amboss.listSectionIds);
+  const ids = await fetchQueryAsUser(api.amboss.listSectionIds);
   return new Set(ids);
 }
 
 export async function getAmbossLibraryStats(): Promise<AmbossLibraryStats> {
   await connection();
-  const s = await fetchQuery(api.amboss.stats);
+  const s = await fetchQueryAsUser(api.amboss.stats);
   return {
     articles: s.articles,
     sections: s.sections,

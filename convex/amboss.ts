@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
+import { requireUserOrService, serviceSecretArg } from './_lib/access';
 
 // Local mirror of the AMBOSS library's canonical article + section IDs. Used
 // by the mapping workflow to validate IDs the LLM cites without round-tripping
@@ -7,24 +8,27 @@ import { mutation, query } from './_generated/server';
 // export. ~1.5k articles + ~15k sections.
 
 export const listArticleIds = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { _secret: serviceSecretArg },
+  handler: async (ctx, { _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db.query('ambossArticles').collect();
     return rows.map((r) => r.articleId);
   },
 });
 
 export const listSectionIds = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { _secret: serviceSecretArg },
+  handler: async (ctx, { _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db.query('ambossSections').collect();
     return rows.map((r) => r.sectionId);
   },
 });
 
 export const stats = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { _secret: serviceSecretArg },
+  handler: async (ctx, { _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const articles = await ctx.db.query('ambossArticles').collect();
     const sections = await ctx.db.query('ambossSections').collect();
     let lastSyncedAt = 0;
@@ -50,8 +54,13 @@ const sectionRow = v.object({
 });
 
 export const upsertArticles = mutation({
-  args: { rows: v.array(articleRow), updatedAt: v.number() },
-  handler: async (ctx, { rows, updatedAt }) => {
+  args: {
+    rows: v.array(articleRow),
+    updatedAt: v.number(),
+    _secret: serviceSecretArg,
+  },
+  handler: async (ctx, { rows, updatedAt, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     for (const r of rows) {
       const existing = await ctx.db
         .query('ambossArticles')
@@ -71,8 +80,13 @@ export const upsertArticles = mutation({
 });
 
 export const upsertSections = mutation({
-  args: { rows: v.array(sectionRow), updatedAt: v.number() },
-  handler: async (ctx, { rows, updatedAt }) => {
+  args: {
+    rows: v.array(sectionRow),
+    updatedAt: v.number(),
+    _secret: serviceSecretArg,
+  },
+  handler: async (ctx, { rows, updatedAt, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     for (const r of rows) {
       const existing = await ctx.db
         .query('ambossSections')
@@ -97,8 +111,9 @@ export const upsertSections = mutation({
  * articles/sections no longer in the export.
  */
 export const pruneOlderThan = mutation({
-  args: { updatedAt: v.number() },
-  handler: async (ctx, { updatedAt }) => {
+  args: { updatedAt: v.number(), _secret: serviceSecretArg },
+  handler: async (ctx, { updatedAt, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     let pruned = 0;
     const sections = await ctx.db.query('ambossSections').collect();
     for (const r of sections) {

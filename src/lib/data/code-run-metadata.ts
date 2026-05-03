@@ -5,8 +5,8 @@
  * the code-detail modal.
  */
 
-import { fetchQuery } from 'convex/nextjs';
 import { connection } from 'next/server';
+import { fetchQueryAsUser } from '@/lib/convex/server';
 import type { EventMetrics } from '@/lib/workflows/lib/events';
 import { api } from '../../../convex/_generated/api';
 
@@ -49,7 +49,7 @@ export async function loadCodeMappingMetadata(
   code: string,
 ): Promise<CodeRunMetadata | null> {
   await connection();
-  const result = await fetchQuery(api.pipeline.getCodeRunMetadata, { slug, code });
+  const result = await fetchQueryAsUser(api.pipeline.getCodeRunMetadata, { slug, code });
   if (!result) return null;
 
   const attempts: CodeRunAttempt[] = result.events.map((e) => {
