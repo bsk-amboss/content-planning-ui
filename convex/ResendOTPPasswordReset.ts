@@ -1,5 +1,8 @@
 import { Email } from '@convex-dev/auth/providers/Email';
+import type { GenericActionCtx } from 'convex/server';
 import { ConvexError } from 'convex/values';
+import { internal } from './_generated/api';
+import type { DataModel } from './_generated/dataModel';
 
 // Custom Email-based provider used by the Password provider's `reset` slot
 // (see convex/auth.ts). Sends a 6-digit OTP that the user enters along with
@@ -8,6 +11,9 @@ import { ConvexError } from 'convex/values';
 // touching the verification flow.
 //
 // Env: shares RESEND_API_KEY with ResendOTP.
+
+type ActionCtx = GenericActionCtx<DataModel>;
+
 export const ResendOTPPasswordReset = Email({
   id: 'resend-otp-password-reset',
   maxAge: 60 * 10,
@@ -17,7 +23,16 @@ export const ResendOTPPasswordReset = Email({
     const n = ((buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3]) >>> 0;
     return (n % 1_000_000).toString().padStart(6, '0');
   },
-  async sendVerificationRequest({ identifier: email, token, expires }) {
+  async sendVerificationRequest(
+    { identifier: email, token, expires },
+    // See ResendOTP.ts for the rationale on accepting ctx as a 2nd arg.
+    ctx?: ActionCtx,
+  ) {
+    if (!ctx?.runMutation) {
+      throw new ConvexError('OTP rate limiter unavailable — refusing to send.');
+    }
+    await ctx.runMutation(internal.otpRateLimit.checkAndRecord, { email });
+
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) {
       throw new ConvexError(

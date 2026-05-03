@@ -1,5 +1,8 @@
 import { Email } from '@convex-dev/auth/providers/Email';
+import type { GenericActionCtx } from 'convex/server';
 import { ConvexError } from 'convex/values';
+import { internal } from './_generated/api';
+import type { DataModel } from './_generated/dataModel';
 
 // Custom Email-based provider that sends a 6-digit OTP via Resend.
 // Wired into the Password provider's `verify` slot in convex/auth.ts so
@@ -11,6 +14,9 @@ import { ConvexError } from 'convex/values';
 // (`npx convex env set RESEND_API_KEY <key>`). Until prod has a verified
 // domain, the from-address is `onboarding@resend.dev`, which Resend allows
 // for testing without DNS.
+
+type ActionCtx = GenericActionCtx<DataModel>;
+
 export const ResendOTP = Email({
   id: 'resend-otp',
   maxAge: 60 * 10,
@@ -20,7 +26,19 @@ export const ResendOTP = Email({
     const n = ((buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3]) >>> 0;
     return (n % 1_000_000).toString().padStart(6, '0');
   },
-  async sendVerificationRequest({ identifier: email, token, expires }) {
+  async sendVerificationRequest(
+    { identifier: email, token, expires },
+    // The library passes its action ctx as a second positional arg even though
+    // its public type annotation hides it (see @ts-expect-error in
+    // node_modules/@convex-dev/auth/.../signIn.ts). We rely on it for the
+    // per-email rate limiter — fail closed if the API ever stops passing it.
+    ctx?: ActionCtx,
+  ) {
+    if (!ctx?.runMutation) {
+      throw new ConvexError('OTP rate limiter unavailable — refusing to send.');
+    }
+    await ctx.runMutation(internal.otpRateLimit.checkAndRecord, { email });
+
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) {
       throw new ConvexError(

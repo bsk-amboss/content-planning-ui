@@ -10,6 +10,7 @@
 
 import type * as ResendOTP from "../ResendOTP.js";
 import type * as ResendOTPPasswordReset from "../ResendOTPPasswordReset.js";
+import type * as _lib_access from "../_lib/access.js";
 import type * as amboss from "../amboss.js";
 import type * as articles from "../articles.js";
 import type * as auth from "../auth.js";
@@ -17,6 +18,7 @@ import type * as categories from "../categories.js";
 import type * as codes from "../codes.js";
 import type * as http from "../http.js";
 import type * as ontology from "../ontology.js";
+import type * as otpRateLimit from "../otpRateLimit.js";
 import type * as overview from "../overview.js";
 import type * as pipeline from "../pipeline.js";
 import type * as sections from "../sections.js";
@@ -33,6 +35,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   ResendOTP: typeof ResendOTP;
   ResendOTPPasswordReset: typeof ResendOTPPasswordReset;
+  "_lib/access": typeof _lib_access;
   amboss: typeof amboss;
   articles: typeof articles;
   auth: typeof auth;
@@ -40,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   codes: typeof codes;
   http: typeof http;
   ontology: typeof ontology;
+  otpRateLimit: typeof otpRateLimit;
   overview: typeof overview;
   pipeline: typeof pipeline;
   sections: typeof sections;
