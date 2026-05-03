@@ -6,9 +6,7 @@ import { env } from '@/env';
 
 /**
  * Wraps the app with the Convex client used by every `useQuery` /
- * `useMutation` call. Mounted at the root in `src/app/layout.tsx` *inside*
- * `QueryProviders` so TanStack Query and Convex coexist while the migration
- * is in flight (TanStack still serves any non-migrated tab).
+ * `useMutation` call. Mounted at the root in `src/app/layout.tsx`.
  *
  * The client is constructed at module scope rather than inside `useState`.
  * `new ConvexReactClient()` calls `Math.random()` to mint a connection id;
