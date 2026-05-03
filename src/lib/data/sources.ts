@@ -1,6 +1,6 @@
 import { connection } from 'next/server';
 import { fetchQueryAsUser } from '@/lib/convex/server';
-import type { OntologySource } from '@/lib/repositories/common/tab-names';
+import type { OntologySource } from '@/lib/types';
 import { api } from '../../../convex/_generated/api';
 
 export async function listSourceOntology(slug: string, source: OntologySource) {

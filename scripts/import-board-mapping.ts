@@ -14,9 +14,9 @@
  * a specialty seeded from xlsx keeps its lineage.
  */
 
-import { readTabRows } from '@/lib/repositories/xlsx/client';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './_lib/convex';
+import { readTabRows } from './_lib/xlsx';
 
 const WORKBOOK = 'board_specialty_mapping_competencies.xlsx';
 const MASTER_TAB = 'master';

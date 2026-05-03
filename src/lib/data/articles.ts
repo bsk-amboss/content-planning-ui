@@ -5,7 +5,7 @@ import type {
   ArticleUpdateSuggestion,
   ConsolidatedArticle,
   NewArticleSuggestion,
-} from '@/lib/repositories/types';
+} from '@/lib/types';
 import { api } from '../../../convex/_generated/api';
 
 // Articles live in Convex. The `codes` blob is JSON-stringified on the wire

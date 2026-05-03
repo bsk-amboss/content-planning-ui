@@ -3,7 +3,7 @@
 import { Badge, Inline, Select, Stack, Text } from '@amboss/design-system';
 import { useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
-import type { ConsolidatedSection } from '@/lib/repositories/types';
+import type { ConsolidatedSection } from '@/lib/types';
 import { type Column, DataTable } from './data-table';
 
 function kindBadge(row: ConsolidatedSection) {

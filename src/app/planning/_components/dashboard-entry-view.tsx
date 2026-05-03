@@ -2,7 +2,7 @@
 
 import { Callout, H1, Stack, Text } from '@amboss/design-system';
 import { useEffect, useState } from 'react';
-import type { Specialty } from '@/lib/repositories/types';
+import type { Specialty } from '@/lib/types';
 import { SpecialtyEntry } from './specialty-entry';
 
 const STORAGE_KEY = 'lastSpecialty';

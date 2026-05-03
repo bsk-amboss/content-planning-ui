@@ -1,6 +1,6 @@
 import { connection } from 'next/server';
 import { fetchQueryAsUser } from '@/lib/convex/server';
-import type { Specialty } from '@/lib/repositories/types';
+import type { Specialty } from '@/lib/types';
 import { api } from '../../../convex/_generated/api';
 
 // Specialties live in Convex now. SSR pages call these helpers and get a

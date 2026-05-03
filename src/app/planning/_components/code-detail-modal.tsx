@@ -4,7 +4,7 @@ import { Badge, Inline, Modal, Stack, Tabs, Text } from '@amboss/design-system';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { CodeRunMetadata } from '@/lib/data/code-run-metadata';
-import type { Code } from '@/lib/repositories/types';
+import type { Code } from '@/lib/types';
 import { CoverageBadge, DepthBadge } from './suggestion-badge';
 
 // The on-disk shape of these JSON columns is richer than the Zod type

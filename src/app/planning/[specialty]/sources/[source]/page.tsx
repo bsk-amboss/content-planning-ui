@@ -1,10 +1,7 @@
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
 import { listSourceOntology } from '@/lib/data/sources';
-import {
-  ONTOLOGY_SOURCES,
-  type OntologySource,
-} from '@/lib/repositories/common/tab-names';
+import { ONTOLOGY_SOURCES, type OntologySource } from '@/lib/types';
 import { SourcesView } from '../../../_components/sources-view';
 import { TableSkeleton } from '../../../_components/table-skeleton';
 import { SourceTabs } from './source-tabs';

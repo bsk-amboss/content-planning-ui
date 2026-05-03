@@ -1,7 +1,7 @@
 'use client';
 
 import { H2, Stack, Text } from '@amboss/design-system';
-import type { OntologySource } from '@/lib/repositories/common/tab-names';
+import type { OntologySource } from '@/lib/types';
 import { type Column, DataTable } from './data-table';
 
 type Row = Record<string, unknown>;

@@ -1,6 +1,6 @@
 import { connection } from 'next/server';
 import { fetchQueryAsUser } from '@/lib/convex/server';
-import type { CodeCategory } from '@/lib/repositories/types';
+import type { CodeCategory } from '@/lib/types';
 import { api } from '../../../convex/_generated/api';
 
 // Categories live in Convex now (mirrors specialties.ts pattern). Live updates

@@ -3,7 +3,7 @@
 import { Badge, Card, CardBox, Inline, Stack, Text } from '@amboss/design-system';
 import NextLink from 'next/link';
 import { PHASE_COLOR, PHASE_LABEL, type Phase } from '@/lib/phase';
-import type { Specialty } from '@/lib/repositories/types';
+import type { Specialty } from '@/lib/types';
 
 export function SpecialtyCard({
   specialty,

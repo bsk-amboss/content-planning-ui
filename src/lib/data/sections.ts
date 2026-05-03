@@ -1,7 +1,7 @@
 import { connection } from 'next/server';
 import { fetchQueryAsUser } from '@/lib/convex/server';
 import { hydrateCodesBlobs } from '@/lib/convex-blobs';
-import type { ConsolidatedSection } from '@/lib/repositories/types';
+import type { ConsolidatedSection } from '@/lib/types';
 import { api } from '../../../convex/_generated/api';
 
 export async function listConsolidatedSections(

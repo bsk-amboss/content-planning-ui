@@ -3,7 +3,7 @@
 import { Button, Inline, Select } from '@amboss/design-system';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import type { Specialty } from '@/lib/repositories/types';
+import type { Specialty } from '@/lib/types';
 
 export function SpecialtyEntry({
   specialties,
