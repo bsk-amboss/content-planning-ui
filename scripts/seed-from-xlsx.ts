@@ -1,14 +1,14 @@
 /**
  * Seed Convex ontology tables (ICD-10, HCUP, ABIM, Orpha) from xlsx fixtures.
  *
- *   pnpm db:seed
+ *   npm run seed
  *
  * Per-specialty: clears the four ontology tables in Convex, re-inserts in
  * 100-row chunks (well under the 4 MiB/s free-tier write cap). Uses the same
  * xlsx repository the editor seed reads from.
  *
  * Editor data (codes/articles/sections/categories) lives in Convex and is
- * seeded via `pnpm seed:convex`. Milestones via `pnpm db:import-milestones`.
+ * seeded via `npm run seed:convex`. Milestones via `npm run import-milestones`.
  */
 
 import { existsSync } from 'node:fs';

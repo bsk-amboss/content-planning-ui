@@ -7,8 +7,8 @@
  * what was imported (codes count, milestones length).
  *
  * Usage:
- *   pnpm db:mark-imported -- anesthesiology codes milestones mapping
- *   pnpm db:mark-imported -- anesthesiology codes
+ *   npm run mark-imported -- anesthesiology codes milestones mapping
+ *   npm run mark-imported -- anesthesiology codes
  */
 
 import { api } from '../convex/_generated/api';

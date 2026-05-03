@@ -2,7 +2,7 @@
  * Write milestone text from a local file into specialties.milestones in Convex.
  *
  * Usage:
- *   pnpm db:import-milestones -- anesthesiology anesthesiology_milestones.txt
+ *   npm run import-milestones -- anesthesiology anesthesiology_milestones.txt
  */
 
 import { readFile } from 'node:fs/promises';

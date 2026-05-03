@@ -5,7 +5,7 @@
  * sources, and pipeline state live here.
  *
  * Usage:
- *   pnpm dotenv -e .env.production.local -- tsx scripts/wipe-prod.ts
+ *   npx dotenv -e .env.production.local -- tsx scripts/wipe-prod.ts
  */
 import { api } from '../convex/_generated/api';
 import { convexClient } from './_lib/convex';

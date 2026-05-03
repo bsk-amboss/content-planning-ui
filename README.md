@@ -46,9 +46,9 @@ Sign in is restricted by `STAFF_EMAIL_ALLOWLIST` (Convex env) or, when unset, th
 ### 3. Seed data (optional)
 
 ```bash
-pnpm seed:convex                  # editor tables from xlsx fixtures
-pnpm seed:ontology                # ICD-10 / HCUP / ABIM / Orpha
-pnpm import-board                 # specialty registry
+npm run seed:convex                  # editor tables from xlsx fixtures
+npm run seed:ontology                # ICD-10 / HCUP / ABIM / Orpha
+npm run import-board                 # specialty registry
 ```
 
 See `package.json#scripts` for the full list and [`docs/ARCHITECTURE.md#scripts`](docs/ARCHITECTURE.md#scripts-scripts) for what each does.

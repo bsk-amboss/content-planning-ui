@@ -2,12 +2,12 @@
  * One-shot seed: copies the editor-facing tables from xlsx fixtures into
  * Convex. Reads xlsx directly via the xlsx repository — no Postgres step.
  *
- *   pnpm seed:convex
+ *   npm run seed:convex
  *
  * Idempotent: clears each Convex table for the specialty before re-inserting.
  *
  * Milestones (`specialties.milestones`) are NOT seeded here — run
- * `pnpm db:import-milestones -- <slug> <file>` separately.
+ * `npm run import-milestones -- <slug> <file>` separately.
  */
 
 import { api } from '../convex/_generated/api';
