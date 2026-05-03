@@ -1,36 +1,94 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# amboss-content-planner-ui
 
-## Getting Started
+Internal AMBOSS staff tool for planning medical-content coverage per specialty. Editors trigger durable, multi-stage AI pipelines that extract clinical concepts from board-review PDFs, map them against existing AMBOSS articles, and consolidate gaps into editorial decisions.
 
-First, run the development server:
+> **New here?** Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the system overview, module map, and conventions. Read [`AGENTS.md`](AGENTS.md) for design-system + repo-specific tips.
+
+---
+
+## Quickstart
+
+### 1. Install + provision
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env.local        # then fill in secrets — see below
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Provision local services (one time):
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+# Convex — runs codegen and writes NEXT_PUBLIC_CONVEX_URL into .env.local
+npx convex dev                    # leave running, or run with --once
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# Convex Auth keypair (one per deployment)
+node scripts/generate-auth-keys.mjs > /tmp/keys.env
+set -a; source /tmp/keys.env; set +a
+npx convex env set -- JWT_PRIVATE_KEY "$JWT_PRIVATE_KEY"
+npx convex env set -- JWKS "$JWKS"
+npx convex env set SITE_URL http://localhost:3000
+rm /tmp/keys.env
 
-## Learn More
+# Service token shared between Next + Convex (used by workflows + scripts)
+SECRET=$(openssl rand -hex 32)
+npx convex env set WORKFLOW_SECRET "$SECRET"
+echo "WORKFLOW_SECRET=\"$SECRET\"" >> .env.local
+```
 
-To learn more about Next.js, take a look at the following resources:
+### 2. Run
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm run dev                       # http://localhost:3000
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Sign in is restricted by `STAFF_EMAIL_ALLOWLIST` (Convex env) or, when unset, the legacy AMBOSS-domain whitelist. See [auth model](docs/ARCHITECTURE.md#auth-model).
 
-## Deploy on Vercel
+### 3. Seed data (optional)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+pnpm seed:convex                  # editor tables from xlsx fixtures
+pnpm seed:ontology                # ICD-10 / HCUP / ABIM / Orpha
+pnpm import-board                 # specialty registry
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+See `package.json#scripts` for the full list and [`docs/ARCHITECTURE.md#scripts`](docs/ARCHITECTURE.md#scripts-scripts) for what each does.
+
+---
+
+## Common commands
+
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Dev server with HMR |
+| `npm run build` | Production build (also runs Convex codegen) |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run lint` | Biome check |
+| `npm run lint:fix` | Biome check + write fixes |
+| `npm test` | Vitest |
+| `npm run test:e2e` | Playwright |
+| `/security-review` | Local security review of pending changes (Claude Code slash command) |
+
+CI runs typecheck + lint + test + e2e + an [AI security review](.github/workflows/security-review.yml) on every PR.
+
+---
+
+## Deployment
+
+Zero-config on Vercel. The Convex deployment is auto-managed by the Vercel ↔ Convex integration; on each Vercel build, `npx convex deploy` runs against the connected deployment.
+
+Required environment variables — see [`docs/ARCHITECTURE.md#auth-model`](docs/ARCHITECTURE.md#auth-model) for the full list and where each one goes (Vercel vs. Convex).
+
+---
+
+## Repo conventions
+
+- **Default to server components.** Mark `'use client'` only when needed — see `AGENTS.md` for design-system caveats.
+- **Convex is the source of truth.** Browser + RSC use it via `useQuery` / `preloadQueryAsUser`; workflow runtime uses it with the shared `WORKFLOW_SECRET`. See the [auth boundary checklist](docs/ARCHITECTURE.md#auth-boundary-checklist) before adding new functions.
+- **Workflows for anything multi-step or LLM-bound.** `'use workflow'` for the top-level fn, `'use step'` for retryable substeps. See [workflow flow](docs/ARCHITECTURE.md#workflow-flow-write--approval).
+- **No string-blob columns for new data.** LLM output that uses natural-language keys must be transformed to array-of-records before storage. See [LLM-output normalization](docs/ARCHITECTURE.md#llm-output-normalization).
+
+---
+
+## Project status
+
+The codebase is mid-2026 internal-tool stage: post-launch foundations are landing (auth + audit + rate-limit + dependency hygiene), and the next phase is cleanup before adding **literature search → PDF curation → article generation** workflows. See [`docs/ARCHITECTURE.md#future-modules`](docs/ARCHITECTURE.md#future-modules) for the module placeholders.
