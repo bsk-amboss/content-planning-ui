@@ -1,8 +1,11 @@
 'use client';
 
 import { Button, Callout, Inline, Input, Select, Stack } from '@amboss/design-system';
+import { useMutation } from 'convex/react';
+import { ConvexError } from 'convex/values';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { api } from '../../../../convex/_generated/api';
 
 function autoSlug(name: string): string {
   return name
@@ -14,6 +17,7 @@ function autoSlug(name: string): string {
 
 export function AddSpecialtyForm() {
   const router = useRouter();
+  const createSpecialty = useMutation(api.specialties.create);
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [slugTouched, setSlugTouched] = useState(false);
@@ -31,27 +35,27 @@ export function AddSpecialtyForm() {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch('/api/specialties', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          slug: displayedSlug,
-          name: name.trim(),
-          region: region || undefined,
-          language: language || undefined,
-        }),
+      await createSpecialty({
+        slug: displayedSlug,
+        name: name.trim(),
+        source: 'manual',
+        region: region || undefined,
+        language: language || undefined,
       });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(body?.error ?? `HTTP ${res.status}`);
-        return;
-      }
       setName('');
       setSlug('');
       setSlugTouched(false);
       setRegion('');
       setLanguage('');
       router.refresh();
+    } catch (err) {
+      setError(
+        err instanceof ConvexError && typeof err.data === 'string'
+          ? err.data
+          : err instanceof Error
+            ? err.message
+            : 'Failed to add specialty.',
+      );
     } finally {
       setSubmitting(false);
     }

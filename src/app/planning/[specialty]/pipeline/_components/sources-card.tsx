@@ -10,16 +10,18 @@ import {
   Stack,
   Text,
 } from '@amboss/design-system';
+import { useMutation } from 'convex/react';
+import { ConvexError } from 'convex/values';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import type { CodeSource } from '@/lib/workflows/lib/sources';
+import { api } from '../../../../../../convex/_generated/api';
 import type { SourceKind } from './add-source-modal';
 
 const KIND_COPY: Record<
   SourceKind,
   {
     title: string;
-    endpoint: string;
     description: React.ReactNode;
     slugPlaceholder: string;
     namePlaceholder: string;
@@ -28,7 +30,6 @@ const KIND_COPY: Record<
 > = {
   code: {
     title: 'Code sources',
-    endpoint: '/api/code-sources',
     description: (
       <>
         The slug becomes the code prefix (e.g. <code>ab_&lt;specialty&gt;_0001</code>).
@@ -41,7 +42,6 @@ const KIND_COPY: Record<
   },
   milestone: {
     title: 'Milestone sources',
-    endpoint: '/api/milestone-sources',
     description: (
       <>
         Publishers whose milestone documents you want to extract from. ACGME is seeded by
@@ -68,6 +68,12 @@ export function SourcesCard({
 }) {
   const router = useRouter();
   const copy = KIND_COPY[kind];
+  const createCodeSource = useMutation(api.sources.createCode);
+  const createMilestoneSource = useMutation(api.sources.createMilestone);
+  const removeCodeSource = useMutation(api.sources.removeCode);
+  const removeMilestoneSource = useMutation(api.sources.removeMilestone);
+  const create = kind === 'code' ? createCodeSource : createMilestoneSource;
+  const remove = kind === 'code' ? removeCodeSource : removeMilestoneSource;
   const [slug, setSlug] = useState('');
   const [name, setName] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -92,19 +98,18 @@ export function SourcesCard({
     }
     setSubmitting(true);
     try {
-      const res = await fetch(copy.endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ slug: s, name: n }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(body?.error ?? `HTTP ${res.status}`);
-        return;
-      }
+      await create({ slug: s, name: n });
       setSlug('');
       setName('');
       router.refresh();
+    } catch (err) {
+      setError(
+        err instanceof ConvexError && typeof err.data === 'string'
+          ? err.data
+          : err instanceof Error
+            ? err.message
+            : 'Failed to add source.',
+      );
     } finally {
       setSubmitting(false);
     }
@@ -112,10 +117,18 @@ export function SourcesCard({
 
   const onDelete = async (targetSlug: string) => {
     if (!confirm(`Delete source "${targetSlug}"?`)) return;
-    const res = await fetch(`${copy.endpoint}/${targetSlug}`, {
-      method: 'DELETE',
-    });
-    if (res.ok) router.refresh();
+    try {
+      await remove({ slug: targetSlug });
+      router.refresh();
+    } catch (err) {
+      setError(
+        err instanceof ConvexError && typeof err.data === 'string'
+          ? err.data
+          : err instanceof Error
+            ? err.message
+            : 'Failed to delete source.',
+      );
+    }
   };
 
   return (

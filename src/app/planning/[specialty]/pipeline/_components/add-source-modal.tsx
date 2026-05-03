@@ -1,15 +1,17 @@
 'use client';
 
 import { Callout, Input, Modal, Stack } from '@amboss/design-system';
+import { useMutation } from 'convex/react';
+import { ConvexError } from 'convex/values';
 import { useState } from 'react';
 import type { CodeSource } from '@/lib/workflows/lib/sources';
+import { api } from '../../../../../../convex/_generated/api';
 
 export type SourceKind = 'code' | 'milestone';
 
 const KIND_COPY: Record<
   SourceKind,
   {
-    endpoint: string;
     header: string;
     subHeader: string;
     slugPlaceholder: string;
@@ -17,14 +19,12 @@ const KIND_COPY: Record<
   }
 > = {
   code: {
-    endpoint: '/api/code-sources',
     header: 'Add a new code source',
     subHeader: 'The slug becomes the code prefix (e.g. usmle_<specialty>_0001).',
     slugPlaceholder: 'usmle',
     namePlaceholder: 'USMLE',
   },
   milestone: {
-    endpoint: '/api/milestone-sources',
     header: 'Add a new milestone source',
     subHeader: 'Publisher or authority that produced the milestone document.',
     slugPlaceholder: 'aamc',
@@ -50,6 +50,9 @@ export function AddSourceModal({
   onCreated: (source: CodeSource) => void;
 }) {
   const copy = KIND_COPY[kind];
+  const createCode = useMutation(api.sources.createCode);
+  const createMilestone = useMutation(api.sources.createMilestone);
+  const create = kind === 'code' ? createCode : createMilestone;
   const [slug, setSlug] = useState('');
   const [name, setName] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -82,22 +85,17 @@ export function AddSourceModal({
     }
     setSubmitting(true);
     try {
-      const res = await fetch(copy.endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ slug: s, name: n }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(body?.error ?? `HTTP ${res.status}`);
-        return;
-      }
-      const created: CodeSource = {
-        slug: body.source?.slug ?? s,
-        name: body.source?.name ?? n,
-      };
+      await create({ slug: s, name: n });
       reset();
-      onCreated(created);
+      onCreated({ slug: s, name: n });
+    } catch (err) {
+      setError(
+        err instanceof ConvexError && typeof err.data === 'string'
+          ? err.data
+          : err instanceof Error
+            ? err.message
+            : 'Failed to add source.',
+      );
     } finally {
       setSubmitting(false);
     }
