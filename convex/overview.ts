@@ -1,15 +1,6 @@
 import { v } from 'convex/values';
 import { query } from './_generated/server';
 
-const COVERAGE_LEVELS = [
-  'none',
-  'student',
-  'early-resident',
-  'advanced-resident',
-  'attending',
-  'specialist',
-] as const;
-
 /**
  * Counts driving the specialty Overview cards. Convex doesn't have a cheap
  * `count(*) where …` for filtered queries, so we collect by index and reduce.
@@ -46,11 +37,11 @@ export const counts = query({
         .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
         .collect(),
     ]);
-    const allowed = new Set<string>(COVERAGE_LEVELS);
-    const mappedCodes = codes.reduce(
-      (n, c) => (c.coverageLevel && allowed.has(c.coverageLevel) ? n + 1 : n),
-      0,
-    );
+    // "Mapped" = the workflow has produced a result (isInAMBOSS set, true or
+    // false). Matches the codes-table footer in `codes-view.tsx`. Don't gate on
+    // coverageLevel — for codes that aren't in AMBOSS the LLM often returns an
+    // empty coverageLevel, which writeCodeMapping persists as undefined.
+    const mappedCodes = codes.reduce((n, c) => (c.isInAMBOSS === undefined ? n : n + 1), 0);
     return {
       codes: codes.length,
       mappedCodes,
