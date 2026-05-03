@@ -53,6 +53,12 @@
     "ws": "^8.20.0",
     "zod": "^4.3.6"
   },
+  "overrides": {
+    "undici": "^7.16.0",
+    "devalue": "^5.8.0",
+    "postcss": "^8.5.13",
+    "uuid": "^14.0.0"
+  },
   "devDependencies": {
     "@biomejs/biome": "^2.4.12",
     "@playwright/test": "^1.59.1",
