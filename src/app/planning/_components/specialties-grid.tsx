@@ -2,7 +2,7 @@
 
 import { Callout, Card, CardBox, Column, Columns, Stack } from '@amboss/design-system';
 import type { Phase } from '@/lib/phase';
-import type { Specialty } from '@/lib/repositories/types';
+import type { Specialty } from '@/lib/types';
 import { SkeletonLine } from './skeleton';
 import { SpecialtyCard } from './specialty-card';
 

@@ -2,10 +2,7 @@
 
 import { Tabs } from '@amboss/design-system';
 import { useRouter } from 'next/navigation';
-import {
-  ONTOLOGY_SOURCES,
-  type OntologySource,
-} from '@/lib/repositories/common/tab-names';
+import { ONTOLOGY_SOURCES, type OntologySource } from '@/lib/types';
 
 export function SourceTabs({ slug, active }: { slug: string; active: OntologySource }) {
   const router = useRouter();

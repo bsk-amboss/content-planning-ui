@@ -13,9 +13,9 @@
 
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { createXlsxRepos } from '@/lib/repositories/xlsx/repos';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './_lib/convex';
+import { createXlsxRepos } from './_lib/xlsx';
 
 const CHUNK = 100;
 const THROTTLE_MS = 250;

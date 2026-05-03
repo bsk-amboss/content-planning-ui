@@ -3,7 +3,7 @@
 import { type Preloaded, usePreloadedQuery } from 'convex/react';
 import { useMemo } from 'react';
 import { hydrateCodes } from '@/lib/convex-blobs';
-import type { Code } from '@/lib/repositories/types';
+import type { Code } from '@/lib/types';
 import type { api } from '../../../../../convex/_generated/api';
 import { CodesView } from '../../_components/codes-view';
 

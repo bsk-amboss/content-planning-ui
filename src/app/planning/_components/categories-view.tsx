@@ -1,7 +1,7 @@
 'use client';
 
 import { Link, Stack, Text } from '@amboss/design-system';
-import type { CodeCategory } from '@/lib/repositories/types';
+import type { CodeCategory } from '@/lib/types';
 import { type Column, DataTable } from './data-table';
 
 export function CategoriesView({ rows, slug }: { rows: CodeCategory[]; slug: string }) {

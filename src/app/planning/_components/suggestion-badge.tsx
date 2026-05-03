@@ -1,7 +1,7 @@
 'use client';
 
 import { Badge } from '@amboss/design-system';
-import type { CoverageLevel } from '@/lib/repositories/types';
+import type { CoverageLevel } from '@/lib/types';
 
 export type BadgeColor =
   | 'green'

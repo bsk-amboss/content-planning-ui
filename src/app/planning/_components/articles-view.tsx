@@ -5,7 +5,7 @@ import type {
   ArticleUpdateSuggestion,
   ConsolidatedArticle,
   NewArticleSuggestion,
-} from '@/lib/repositories/types';
+} from '@/lib/types';
 import { type Column, DataTable } from './data-table';
 
 const consolidatedColumns: Column<ConsolidatedArticle>[] = [

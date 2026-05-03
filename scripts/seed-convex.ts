@@ -9,10 +9,10 @@
  * Milestones (`specialties.milestones`) are NOT seeded here — run
  * `pnpm db:import-milestones -- <slug> <file>` separately.
  */
-import { buildXlsxRegistry } from '@/lib/repositories';
-import { createXlsxRepos } from '@/lib/repositories/xlsx/repos';
+
 import { api } from '../convex/_generated/api';
 import { convexClient } from './_lib/convex';
+import { buildXlsxRegistry, createXlsxRepos } from './_lib/xlsx';
 
 async function main() {
   const registry = buildXlsxRegistry();
@@ -32,7 +32,6 @@ async function main() {
       slug: s.slug,
       name: s.name,
       source: s.source,
-      sheetId: s.sheetId,
       xlsxPath: s.xlsxPath,
     });
   }

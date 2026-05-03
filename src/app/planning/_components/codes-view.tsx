@@ -2,7 +2,7 @@
 
 import { Badge, Stack, Text } from '@amboss/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { COVERAGE_LEVELS, type Code } from '@/lib/repositories/types';
+import { COVERAGE_LEVELS, type Code } from '@/lib/types';
 import { CodeDetailModal, type DetailTarget } from './code-detail-modal';
 import { type Column, DataTable } from './data-table';
 import { CoverageBadge, DepthBadge } from './suggestion-badge';

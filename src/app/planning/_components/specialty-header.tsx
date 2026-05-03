@@ -2,7 +2,7 @@
 
 import { Badge, Callout, H1, Inline, Stack, Text } from '@amboss/design-system';
 import { PHASE_COLOR, PHASE_LABEL, type Phase } from '@/lib/phase';
-import type { Specialty } from '@/lib/repositories/types';
+import type { Specialty } from '@/lib/types';
 import { Breadcrumbs } from './breadcrumbs';
 import { ChangeSpecialtyButton } from './change-specialty-button';
 import { RefreshButton } from './refresh-button';
