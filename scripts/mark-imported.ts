@@ -11,9 +11,8 @@
  *   pnpm db:mark-imported -- anesthesiology codes
  */
 
-import { ConvexHttpClient } from 'convex/browser';
-import { env } from '@/env';
 import { api } from '../convex/_generated/api';
+import { convexClient } from './_lib/convex';
 
 type Stage = 'codes' | 'milestones' | 'mapping';
 const STAGE_NAME: Record<Stage, 'extract_codes' | 'extract_milestones' | 'map_codes'> = {
@@ -37,10 +36,7 @@ async function main() {
     return s as Stage;
   });
 
-  if (!env.NEXT_PUBLIC_CONVEX_URL) {
-    throw new Error('NEXT_PUBLIC_CONVEX_URL is not set');
-  }
-  const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
+  const convex = convexClient();
 
   const spec = await convex.query(api.specialties.get, { slug });
   if (!spec) {

@@ -14,6 +14,21 @@ import { api } from '../../../../convex/_generated/api';
 import type { MappingOutput } from './amboss-mcp';
 import type { RawExtractedCode } from './gemini';
 
+// Workflow + script callers run outside a Next.js request and have no user
+// JWT. Public Convex functions accept the shared secret on a `_secret` arg
+// to authorize machine traffic. The Convex deployment must have
+// WORKFLOW_SECRET set to the matching value (see .env.example).
+function workflowSecret(): string {
+  const s = process.env.WORKFLOW_SECRET;
+  if (!s) {
+    throw new Error(
+      'WORKFLOW_SECRET unset — workflow cannot authenticate to Convex. ' +
+        'Set it in the Vercel environment and on the Convex deployment.',
+    );
+  }
+  return s;
+}
+
 export type PipelineRunStatus =
   | 'running'
   | 'awaiting_preprocessing_approval'
@@ -51,6 +66,7 @@ export async function createPipelineRun(input: {
   const result = await fetchMutation(api.pipeline.createRun, {
     specialtySlug: input.specialtySlug,
     workflowRunId: input.workflowRunId,
+    _secret: workflowSecret(),
   });
   console.log('[pipeline] createPipelineRun →', result.id);
   return { id: result.id };
@@ -72,6 +88,7 @@ export async function updatePipelineRunStatus(
       ...(terminal ? { finishedAt: Date.now() } : {}),
       ...(error !== undefined ? { error } : {}),
     },
+    _secret: workflowSecret(),
   });
 }
 
@@ -83,7 +100,11 @@ export async function initPipelineStage(
 ): Promise<{ id: string }> {
   'use step';
   console.log('[pipeline] initPipelineStage', { runId, stage });
-  return await fetchMutation(api.pipeline.initStage, { runId, stage });
+  return await fetchMutation(api.pipeline.initStage, {
+    runId,
+    stage,
+    _secret: workflowSecret(),
+  });
 }
 
 export async function markStageRunning(
@@ -101,6 +122,7 @@ export async function markStageRunning(
       startedAt: Date.now(),
       ...(workflowRunId ? { workflowRunId } : {}),
     },
+    _secret: workflowSecret(),
   });
 }
 
@@ -122,6 +144,7 @@ export async function markStageAwaitingApproval(
         ? { draftPayload: JSON.stringify(draftPayload) }
         : {}),
     },
+    _secret: workflowSecret(),
   });
 }
 
@@ -142,6 +165,7 @@ export async function markStageCompleted(
       ...(approvedBy ? { approvedAt: Date.now(), approvedBy } : {}),
       ...(outputSummary ? { outputSummary: JSON.stringify(outputSummary) } : {}),
     },
+    _secret: workflowSecret(),
   });
 }
 
@@ -160,6 +184,7 @@ export async function markStageFailed(
       finishedAt: Date.now(),
       errorMessage,
     },
+    _secret: workflowSecret(),
   });
 }
 
@@ -192,6 +217,7 @@ export async function writeExtractedCodes(
       runId,
       specialtySlug,
       rows: rows.slice(i, i + chunkSize),
+      _secret: workflowSecret(),
     });
   }
   return { inserted: rows.length };
@@ -209,7 +235,10 @@ export async function promoteExtractedCodesToCodes(
 ): Promise<{ promoted: number }> {
   'use step';
   console.log('[pipeline] promoteExtractedCodesToCodes', { runId, specialtySlug });
-  const staged = await fetchQuery(api.pipeline.listExtractedCodesForRun, { runId });
+  const staged = await fetchQuery(api.pipeline.listExtractedCodesForRun, {
+    runId,
+    _secret: workflowSecret(),
+  });
   if (staged.length === 0) return { promoted: 0 };
   const rows = staged.map((s) => ({
     code: s.code,
@@ -221,7 +250,11 @@ export async function promoteExtractedCodesToCodes(
   const chunkSize = 25;
   for (let i = 0; i < rows.length; i += chunkSize) {
     const chunk = rows.slice(i, i + chunkSize);
-    await fetchMutation(api.codes.bulkInsert, { slug: specialtySlug, rows: chunk });
+    await fetchMutation(api.codes.bulkInsert, {
+      slug: specialtySlug,
+      rows: chunk,
+      _secret: workflowSecret(),
+    });
   }
   console.log('[pipeline] promoteExtractedCodesToCodes → promoted', rows.length);
   return { promoted: rows.length };
@@ -242,6 +275,7 @@ export async function writeApprovedMilestones(
     slug: specialtySlug,
     milestones,
     bumpSeedTimestamp: true,
+    _secret: workflowSecret(),
   });
 }
 
@@ -260,7 +294,10 @@ export async function loadSpecialtyForMapping(
 ): Promise<SpecialtyMappingContext> {
   'use step';
   console.log('[pipeline] loadSpecialtyForMapping', { specialtySlug });
-  const row = await fetchQuery(api.specialties.get, { slug: specialtySlug });
+  const row = await fetchQuery(api.specialties.get, {
+    slug: specialtySlug,
+    _secret: workflowSecret(),
+  });
   return {
     region: row?.region ?? null,
     language: row?.language ?? null,
@@ -295,6 +332,7 @@ export async function listUnmappedCodes(
     slug: specialtySlug,
     categories: filter?.categories?.filter((s) => typeof s === 'string' && s.length > 0),
     codes: filter?.codes?.filter((s) => typeof s === 'string' && s.length > 0),
+    _secret: workflowSecret(),
   });
   console.log('[pipeline] listUnmappedCodes →', rows.length);
   return rows;
@@ -331,6 +369,7 @@ export async function writeCodeMapping(
     newArticlesNeeded: mapping.suggestion.newArticlesNeeded
       ? JSON.stringify(mapping.suggestion.newArticlesNeeded)
       : undefined,
+    _secret: workflowSecret(),
   });
 }
 
@@ -339,7 +378,11 @@ export async function clearMappingForCode(
   code: string,
 ): Promise<void> {
   console.log('[pipeline] clearMappingForCode', { specialtySlug, code });
-  await fetchMutation(api.codes.clearMapping, { slug: specialtySlug, code });
+  await fetchMutation(api.codes.clearMapping, {
+    slug: specialtySlug,
+    code,
+    _secret: workflowSecret(),
+  });
 }
 
 export async function markCodesInFlight(
@@ -354,11 +397,19 @@ export async function markCodesInFlight(
     count: codes.length,
   });
   if (codes.length === 0) return;
-  await fetchMutation(api.codes.markInFlight, { slug: specialtySlug, codes, runId });
+  await fetchMutation(api.codes.markInFlight, {
+    slug: specialtySlug,
+    codes,
+    runId,
+    _secret: workflowSecret(),
+  });
 }
 
 export async function clearInFlightForRun(runId: string): Promise<void> {
   'use step';
   console.log('[pipeline] clearInFlightForRun', { runId });
-  await fetchMutation(api.codes.clearInFlightForRun, { runId });
+  await fetchMutation(api.codes.clearInFlightForRun, {
+    runId,
+    _secret: workflowSecret(),
+  });
 }

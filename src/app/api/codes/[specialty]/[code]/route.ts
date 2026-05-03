@@ -13,8 +13,9 @@
  * so every connected editor sees the change without polling.
  */
 
-import { fetchMutation } from 'convex/nextjs';
 import { type NextRequest, NextResponse } from 'next/server';
+import { requireUserResponse } from '@/lib/auth';
+import { fetchMutationAsUser } from '@/lib/convex/server';
 import { getConsolidationLockState } from '@/lib/data/codes';
 import { api } from '../../../../../../convex/_generated/api';
 
@@ -38,6 +39,8 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ specialty: string; code: string }> },
 ) {
+  const guard = await requireUserResponse();
+  if (guard) return guard;
   const { specialty, code } = await params;
   const slug = decodeURIComponent(specialty);
   const codeId = decodeURIComponent(code);
@@ -71,7 +74,7 @@ export async function PATCH(
   console.log('[codes] PATCH', { slug, code: codeId, fields });
 
   try {
-    await fetchMutation(api.codes.patch, { slug, code: codeId, fields });
+    await fetchMutationAsUser(api.codes.patch, { slug, code: codeId, fields });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes('No code')) {

@@ -17,10 +17,11 @@
  * stage, and starts the workflow.
  */
 
-import { fetchMutation, fetchQuery } from 'convex/nextjs';
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
 import { start } from 'workflow/api';
+import { requireUserResponse } from '@/lib/auth';
+import { fetchMutationAsUser, fetchQueryAsUser } from '@/lib/convex/server';
 import { approvalToken } from '@/lib/workflows/lib/approval';
 import type { MappingFilter } from '@/lib/workflows/lib/db-writes';
 import { mapCodesWorkflow } from '@/lib/workflows/mapping/map-codes';
@@ -56,7 +57,7 @@ async function countUnmappedWithFilter(
   slug: string,
   filter: MappingFilter | null,
 ): Promise<number> {
-  const rows = await fetchQuery(api.codes.listUnmapped, {
+  const rows = await fetchQueryAsUser(api.codes.listUnmapped, {
     slug,
     categories: filter?.categories ?? undefined,
     codes: filter?.codes ?? undefined,
@@ -65,13 +66,15 @@ async function countUnmappedWithFilter(
 }
 
 export async function POST(req: NextRequest) {
+  const guard = await requireUserResponse();
+  if (guard) return guard;
   const body = (await req.json().catch(() => ({}))) as Body;
   const slug = body.specialtySlug;
   if (!slug) {
     return NextResponse.json({ error: 'specialtySlug required' }, { status: 400 });
   }
 
-  const spec = await fetchQuery(api.specialties.get, { slug });
+  const spec = await fetchQueryAsUser(api.specialties.get, { slug });
   if (!spec) {
     return NextResponse.json({ error: `specialty not found: ${slug}` }, { status: 404 });
   }
@@ -98,10 +101,10 @@ export async function POST(req: NextRequest) {
   const checkAgainstLibrary = body.checkAgainstLibrary !== false;
   const mappingInstructions = body.additionalInstructions?.trim() || null;
 
-  const { id: runId } = await fetchMutation(api.pipeline.createRun, {
+  const { id: runId } = await fetchMutationAsUser(api.pipeline.createRun, {
     specialtySlug: slug,
   });
-  await fetchMutation(api.pipeline.updateRun, {
+  await fetchMutationAsUser(api.pipeline.updateRun, {
     runId,
     patch: {
       mappingInstructions,
@@ -109,7 +112,7 @@ export async function POST(req: NextRequest) {
       ...(filter ? { mappingFilter: JSON.stringify(filter) } : {}),
     },
   });
-  await fetchMutation(api.pipeline.initStage, { runId, stage: 'map_codes' });
+  await fetchMutationAsUser(api.pipeline.initStage, { runId, stage: 'map_codes' });
 
   const wfRun = await start(mapCodesWorkflow, [
     {
@@ -123,7 +126,7 @@ export async function POST(req: NextRequest) {
     },
   ]);
 
-  await fetchMutation(api.pipeline.updateRun, {
+  await fetchMutationAsUser(api.pipeline.updateRun, {
     runId,
     patch: { workflowRunId: wfRun.runId },
   });

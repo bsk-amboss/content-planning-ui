@@ -5,10 +5,11 @@
  *   body: { specialtySlug, code, contentBase?, language?, checkAgainstLibrary? }
  */
 
-import { fetchMutation, fetchQuery } from 'convex/nextjs';
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
 import { start } from 'workflow/api';
+import { requireUserResponse } from '@/lib/auth';
+import { fetchMutationAsUser, fetchQueryAsUser } from '@/lib/convex/server';
 import { getConsolidationLockState } from '@/lib/data/codes';
 import { approvalToken } from '@/lib/workflows/lib/approval';
 import { clearMappingForCode } from '@/lib/workflows/lib/db-writes';
@@ -25,6 +26,8 @@ type Body = {
 };
 
 export async function POST(req: NextRequest) {
+  const guard = await requireUserResponse();
+  if (guard) return guard;
   const body = (await req.json().catch(() => ({}))) as Body;
   const slug = body.specialtySlug?.trim();
   const code = body.code?.trim();
@@ -47,12 +50,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const spec = await fetchQuery(api.specialties.get, { slug });
+  const spec = await fetchQueryAsUser(api.specialties.get, { slug });
   if (!spec) {
     return NextResponse.json({ error: `specialty not found: ${slug}` }, { status: 404 });
   }
 
-  const existing = await fetchQuery(api.codes.get, { slug, code });
+  const existing = await fetchQueryAsUser(api.codes.get, { slug, code });
   if (!existing) {
     return NextResponse.json({ error: `code not found: ${code}` }, { status: 404 });
   }
@@ -63,10 +66,10 @@ export async function POST(req: NextRequest) {
   const mappingInstructions = body.additionalInstructions?.trim() || null;
   const filter = { codes: [code] } as const;
 
-  const { id: runId } = await fetchMutation(api.pipeline.createRun, {
+  const { id: runId } = await fetchMutationAsUser(api.pipeline.createRun, {
     specialtySlug: slug,
   });
-  await fetchMutation(api.pipeline.updateRun, {
+  await fetchMutationAsUser(api.pipeline.updateRun, {
     runId,
     patch: {
       mappingInstructions,
@@ -74,7 +77,7 @@ export async function POST(req: NextRequest) {
       mappingFilter: JSON.stringify(filter),
     },
   });
-  await fetchMutation(api.pipeline.initStage, { runId, stage: 'map_codes' });
+  await fetchMutationAsUser(api.pipeline.initStage, { runId, stage: 'map_codes' });
 
   const wfRun = await start(mapCodesWorkflow, [
     {
@@ -88,7 +91,7 @@ export async function POST(req: NextRequest) {
     },
   ]);
 
-  await fetchMutation(api.pipeline.updateRun, {
+  await fetchMutationAsUser(api.pipeline.updateRun, {
     runId,
     patch: { workflowRunId: wfRun.runId },
   });

@@ -1,5 +1,5 @@
-import { fetchQuery } from 'convex/nextjs';
 import { connection } from 'next/server';
+import { fetchQueryAsUser } from '@/lib/convex/server';
 import type { Specialty } from '@/lib/repositories/types';
 import { api } from '../../../convex/_generated/api';
 
@@ -42,13 +42,13 @@ function toSpecialty(row: ConvexSpecialty): Specialty {
 // `next-prerender-random` rule otherwise).
 export async function listSpecialties(): Promise<Specialty[]> {
   await connection();
-  const rows = await fetchQuery(api.specialties.list);
+  const rows = await fetchQueryAsUser(api.specialties.list);
   return rows.map(toSpecialty);
 }
 
 export async function getSpecialty(slug: string): Promise<Specialty | null> {
   await connection();
-  const row = await fetchQuery(api.specialties.get, { slug });
+  const row = await fetchQueryAsUser(api.specialties.get, { slug });
   return row ? toSpecialty(row) : null;
 }
 
@@ -59,6 +59,6 @@ export async function getSpecialty(slug: string): Promise<Specialty | null> {
  */
 export async function getMilestones(slug: string): Promise<string | null> {
   await connection();
-  const row = await fetchQuery(api.specialties.get, { slug });
+  const row = await fetchQueryAsUser(api.specialties.get, { slug });
   return row?.milestones ?? null;
 }

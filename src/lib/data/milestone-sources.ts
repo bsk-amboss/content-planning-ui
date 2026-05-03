@@ -4,15 +4,15 @@
  * stage-card rendering both derive labels from this list.
  */
 
-import { fetchMutation, fetchQuery } from 'convex/nextjs';
 import { connection } from 'next/server';
+import { fetchMutationAsUser, fetchQueryAsUser } from '@/lib/convex/server';
 import { api } from '../../../convex/_generated/api';
 
 export type MilestoneSourceRow = { slug: string; name: string; createdAt: number };
 
 export async function listMilestoneSources(): Promise<MilestoneSourceRow[]> {
   await connection();
-  const rows = await fetchQuery(api.sources.listMilestone);
+  const rows = await fetchQueryAsUser(api.sources.listMilestone);
   return rows.map((r) => ({ slug: r.slug, name: r.name, createdAt: r.createdAt }));
 }
 
@@ -20,7 +20,7 @@ export async function createMilestoneSource(input: {
   slug: string;
   name: string;
 }): Promise<MilestoneSourceRow> {
-  await fetchMutation(api.sources.createMilestone, {
+  await fetchMutationAsUser(api.sources.createMilestone, {
     slug: input.slug,
     name: input.name,
   });
@@ -28,5 +28,5 @@ export async function createMilestoneSource(input: {
 }
 
 export async function deleteMilestoneSource(slug: string): Promise<void> {
-  await fetchMutation(api.sources.removeMilestone, { slug });
+  await fetchMutationAsUser(api.sources.removeMilestone, { slug });
 }

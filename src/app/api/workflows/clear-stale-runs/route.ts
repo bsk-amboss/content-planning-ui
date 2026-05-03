@@ -15,6 +15,7 @@
 
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
+import { requireUserResponse } from '@/lib/auth';
 import { clearStaleRunsForSpecialty } from '@/lib/workflows/lib/reset';
 
 type Body = {
@@ -22,6 +23,8 @@ type Body = {
 };
 
 export async function POST(req: NextRequest) {
+  const guard = await requireUserResponse();
+  if (guard) return guard;
   const body = (await req.json().catch(() => ({}))) as Body;
   if (!body.specialtySlug) {
     return NextResponse.json({ error: 'specialtySlug required' }, { status: 400 });

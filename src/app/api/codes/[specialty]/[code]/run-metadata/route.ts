@@ -11,12 +11,15 @@
  */
 
 import { type NextRequest, NextResponse } from 'next/server';
+import { requireUserResponse } from '@/lib/auth';
 import { loadCodeMappingMetadata } from '@/lib/data/code-run-metadata';
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ specialty: string; code: string }> },
 ) {
+  const guard = await requireUserResponse();
+  if (guard) return guard;
   const { specialty, code } = await params;
   const slug = decodeURIComponent(specialty);
   const codeId = decodeURIComponent(code);

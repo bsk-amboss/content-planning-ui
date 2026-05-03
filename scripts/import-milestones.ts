@@ -7,9 +7,8 @@
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { ConvexHttpClient } from 'convex/browser';
-import { env } from '@/env';
 import { api } from '../convex/_generated/api';
+import { convexClient } from './_lib/convex';
 
 async function main() {
   const [slug, file] = process.argv.slice(2);
@@ -17,13 +16,10 @@ async function main() {
     console.error('Usage: db:import-milestones -- <slug> <file>');
     process.exit(1);
   }
-  if (!env.NEXT_PUBLIC_CONVEX_URL) {
-    throw new Error('NEXT_PUBLIC_CONVEX_URL is not set');
-  }
   const abs = path.isAbsolute(file) ? file : path.join(process.cwd(), file);
   const text = (await readFile(abs, 'utf8')).trim();
 
-  const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
+  const convex = convexClient();
   await convex.mutation(api.specialties.updateMilestones, {
     slug,
     milestones: text,

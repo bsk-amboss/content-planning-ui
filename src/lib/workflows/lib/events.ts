@@ -9,6 +9,14 @@ import { fetchMutation, fetchQuery } from 'convex/nextjs';
 import { api } from '../../../../convex/_generated/api';
 import type { StageName } from './db-writes';
 
+function workflowSecret(): string {
+  const s = process.env.WORKFLOW_SECRET;
+  if (!s) {
+    throw new Error('WORKFLOW_SECRET unset — workflow cannot authenticate to Convex.');
+  }
+  return s;
+}
+
 export type EventLevel = 'info' | 'warn' | 'error';
 
 export type EventMetrics = {
@@ -49,6 +57,7 @@ export async function logEvent(input: {
     level: input.level,
     message: input.message,
     metrics: input.metrics ? JSON.stringify(input.metrics) : undefined,
+    _secret: workflowSecret(),
   });
 }
 
@@ -72,8 +81,15 @@ export async function aggregateStageMetrics(
   stage: StageName,
 ): Promise<StageTotals> {
   'use step';
-  const events = await fetchQuery(api.pipeline.listEvents, { runId });
-  const stageRow = await fetchQuery(api.pipeline.getStage, { runId, stage });
+  const events = await fetchQuery(api.pipeline.listEvents, {
+    runId,
+    _secret: workflowSecret(),
+  });
+  const stageRow = await fetchQuery(api.pipeline.getStage, {
+    runId,
+    stage,
+    _secret: workflowSecret(),
+  });
 
   let apiCalls = 0;
   let computeMs = 0;

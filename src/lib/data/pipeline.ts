@@ -4,8 +4,8 @@
  * own queries).
  */
 
-import { fetchQuery } from 'convex/nextjs';
 import { connection } from 'next/server';
+import { fetchQueryAsUser } from '@/lib/convex/server';
 import { derivePhase, type Phase } from '@/lib/phase';
 import type { StageName } from '@/lib/workflows/lib/db-writes';
 import { api } from '../../../convex/_generated/api';
@@ -168,13 +168,13 @@ export async function getCurrentPipelineRun(
   slug: string,
 ): Promise<PipelineRunRow | null> {
   await connection();
-  const r = await fetchQuery(api.pipeline.getCurrentRun, { slug });
+  const r = await fetchQueryAsUser(api.pipeline.getCurrentRun, { slug });
   return r ? toRun(r as ConvexRun) : null;
 }
 
 export async function listPipelineRuns(slug: string): Promise<PipelineRunRow[]> {
   await connection();
-  const rows = await fetchQuery(api.pipeline.listRuns, { slug });
+  const rows = await fetchQueryAsUser(api.pipeline.listRuns, { slug });
   return (rows as ConvexRun[]).map(toRun);
 }
 
@@ -183,7 +183,7 @@ export async function listPipelineStages(
   _slug: string,
 ): Promise<PipelineStageRow[]> {
   await connection();
-  const rows = await fetchQuery(api.pipeline.listStages, { runId });
+  const rows = await fetchQueryAsUser(api.pipeline.listStages, { runId });
   return (rows as ConvexStage[]).map(toStage);
 }
 
@@ -192,7 +192,7 @@ export async function listPipelineEvents(
   _slug: string,
 ): Promise<PipelineEventRow[]> {
   await connection();
-  const rows = await fetchQuery(api.pipeline.listEvents, { runId });
+  const rows = await fetchQueryAsUser(api.pipeline.listEvents, { runId });
   return (rows as ConvexEvent[]).map(toEvent);
 }
 
@@ -200,7 +200,7 @@ export async function getLatestStageContexts(
   slug: string,
 ): Promise<Partial<Record<StageName, StageContext>>> {
   await connection();
-  const raw = await fetchQuery(api.pipeline.getLatestStageContexts, { slug });
+  const raw = await fetchQueryAsUser(api.pipeline.getLatestStageContexts, { slug });
   const out: Partial<Record<StageName, StageContext>> = {};
   for (const [stageName, ctx] of Object.entries(raw)) {
     const c = ctx as {
@@ -224,7 +224,7 @@ export type MapCodesHistory = {
 
 export async function getMapCodesHistory(slug: string): Promise<MapCodesHistory> {
   await connection();
-  const r = await fetchQuery(api.pipeline.getMapCodesHistory, { slug });
+  const r = await fetchQueryAsUser(api.pipeline.getMapCodesHistory, { slug });
   return {
     runs: (r.runs as ConvexRun[]).map(toRun),
     events: (r.events as ConvexEvent[]).map(toEvent),
@@ -237,7 +237,7 @@ export async function getMapCodesHistory(slug: string): Promise<MapCodesHistory>
  */
 export async function listSpecialtyPhases(): Promise<Record<string, Phase>> {
   await connection();
-  const map = await fetchQuery(api.pipeline.listSpecialtyPhases);
+  const map = await fetchQueryAsUser(api.pipeline.listSpecialtyPhases);
   const out: Record<string, Phase> = {};
   for (const [slug, status] of Object.entries(map)) {
     out[slug] = derivePhase({ status: status as string });

@@ -7,15 +7,11 @@
  * Usage:
  *   pnpm dotenv -e .env.production.local -- tsx scripts/wipe-prod.ts
  */
-import { ConvexHttpClient } from 'convex/browser';
-import { env } from '@/env';
 import { api } from '../convex/_generated/api';
+import { convexClient } from './_lib/convex';
 
 async function main() {
-  if (!env.NEXT_PUBLIC_CONVEX_URL) {
-    throw new Error('NEXT_PUBLIC_CONVEX_URL not set');
-  }
-  const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
+  const convex = convexClient();
 
   console.log('▶ wiping per-specialty Convex tables …');
   const convexSpecialties = (await convex.query(api.specialties.list)) as Array<{

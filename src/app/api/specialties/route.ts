@@ -13,8 +13,9 @@
  * the user kicks off an extraction.
  */
 
-import { fetchMutation, fetchQuery } from 'convex/nextjs';
 import { type NextRequest, NextResponse } from 'next/server';
+import { requireUserResponse } from '@/lib/auth';
+import { fetchMutationAsUser, fetchQueryAsUser } from '@/lib/convex/server';
 import { api } from '../../../../convex/_generated/api';
 
 function sanitizeSlug(input: string): string {
@@ -33,6 +34,8 @@ type Body = {
 };
 
 export async function POST(req: NextRequest) {
+  const guard = await requireUserResponse();
+  if (guard) return guard;
   const body = (await req.json().catch(() => ({}))) as Body;
   const slug = body.slug ? sanitizeSlug(body.slug) : '';
   const name = body.name?.trim() ?? '';
@@ -43,7 +46,7 @@ export async function POST(req: NextRequest) {
   // Pre-flight uniqueness check — Convex doesn't enforce a unique constraint
   // by itself, so we look up the slug first. The `create` mutation also
   // upserts, but we want to return the same 409 the old endpoint did.
-  const existing = await fetchQuery(api.specialties.get, { slug });
+  const existing = await fetchQueryAsUser(api.specialties.get, { slug });
   if (existing) {
     return NextResponse.json(
       { error: `specialty '${slug}' already exists` },
@@ -52,7 +55,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    await fetchMutation(api.specialties.create, {
+    await fetchMutationAsUser(api.specialties.create, {
       slug,
       name,
       source: 'manual',

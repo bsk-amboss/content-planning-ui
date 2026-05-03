@@ -1,27 +1,31 @@
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
+import { requireUserOrService, serviceSecretArg } from './_lib/access';
 
 // Code + milestone source dropdowns. Tiny tables, full-list queries.
 
 export const listCode = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { _secret: serviceSecretArg },
+  handler: async (ctx, { _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db.query('codeSources').collect();
     return rows.sort((a, b) => a.name.localeCompare(b.name));
   },
 });
 
 export const listMilestone = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { _secret: serviceSecretArg },
+  handler: async (ctx, { _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const rows = await ctx.db.query('milestoneSources').collect();
     return rows.sort((a, b) => a.name.localeCompare(b.name));
   },
 });
 
 export const createCode = mutation({
-  args: { slug: v.string(), name: v.string() },
-  handler: async (ctx, { slug, name }) => {
+  args: { slug: v.string(), name: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, name, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const existing = await ctx.db
       .query('codeSources')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
@@ -32,8 +36,9 @@ export const createCode = mutation({
 });
 
 export const createMilestone = mutation({
-  args: { slug: v.string(), name: v.string() },
-  handler: async (ctx, { slug, name }) => {
+  args: { slug: v.string(), name: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, name, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const existing = await ctx.db
       .query('milestoneSources')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
@@ -44,8 +49,9 @@ export const createMilestone = mutation({
 });
 
 export const removeCode = mutation({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const existing = await ctx.db
       .query('codeSources')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
@@ -55,8 +61,9 @@ export const removeCode = mutation({
 });
 
 export const removeMilestone = mutation({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
+  args: { slug: v.string(), _secret: serviceSecretArg },
+  handler: async (ctx, { slug, _secret }) => {
+    await requireUserOrService(ctx, _secret);
     const existing = await ctx.db
       .query('milestoneSources')
       .withIndex('by_slug', (q) => q.eq('slug', slug))

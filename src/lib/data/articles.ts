@@ -1,5 +1,5 @@
-import { fetchQuery } from 'convex/nextjs';
 import { connection } from 'next/server';
+import { fetchQueryAsUser } from '@/lib/convex/server';
 import { hydrateCodesBlobs } from '@/lib/convex-blobs';
 import type {
   ArticleUpdateSuggestion,
@@ -23,19 +23,19 @@ export async function listConsolidatedArticles(
   slug: string,
 ): Promise<ConsolidatedArticle[]> {
   await connection();
-  return strip(await fetchQuery(api.articles.listConsolidated, { slug }));
+  return strip(await fetchQueryAsUser(api.articles.listConsolidated, { slug }));
 }
 
 export async function listNewArticleSuggestions(
   slug: string,
 ): Promise<NewArticleSuggestion[]> {
   await connection();
-  return strip(await fetchQuery(api.articles.listNew, { slug }));
+  return strip(await fetchQueryAsUser(api.articles.listNew, { slug }));
 }
 
 export async function listArticleUpdateSuggestions(
   slug: string,
 ): Promise<ArticleUpdateSuggestion[]> {
   await connection();
-  return strip(await fetchQuery(api.articles.listUpdates, { slug }));
+  return strip(await fetchQueryAsUser(api.articles.listUpdates, { slug }));
 }

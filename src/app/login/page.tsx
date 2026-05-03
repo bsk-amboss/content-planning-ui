@@ -22,6 +22,20 @@ import { useState } from 'react';
 // state change can be silently dropped under Cache Components, and (2) a
 // hard navigation guarantees the proxy/middleware reads the freshly-set
 // auth cookie on the next request, eliminating any stale-token race.
+//
+// `?next=` is user-controlled (anyone can craft a /login link) so we must
+// only honour same-origin paths. Reject anything that doesn't start with a
+// single `/`, including protocol-relative `//evil.com` and any URL scheme
+// such as `javascript:` (which `window.location.assign` would still execute
+// in the post-auth origin).
+function safeRedirectTarget(raw: string | null | undefined): string {
+  if (!raw) return '/';
+  if (raw.length === 0 || raw[0] !== '/') return '/';
+  if (raw.length > 1 && raw[1] === '/') return '/'; // protocol-relative
+  if (raw[1] === '\\') return '/'; // backslash-confusion
+  return raw;
+}
+
 function navigateAfterAuth(target: string) {
   window.location.assign(target);
 }
@@ -83,7 +97,7 @@ export default function LoginPage() {
       // verify is enabled, so signUp (and sign-in for unverified accounts)
       // returns signingIn:false and sends a code to the user's inbox.
       if (result.signingIn) {
-        navigateAfterAuth(searchParams.get('next') ?? '/');
+        navigateAfterAuth(safeRedirectTarget(searchParams.get('next')));
       } else {
         setStage('code');
         setCode('');
@@ -105,7 +119,7 @@ export default function LoginPage() {
         code: code.trim(),
         flow: 'email-verification',
       });
-      navigateAfterAuth(searchParams.get('next') ?? '/');
+      navigateAfterAuth(safeRedirectTarget(searchParams.get('next')));
     } catch (err) {
       setError(readError(err, 'Verification failed. Try the code again.'));
     } finally {
@@ -169,7 +183,7 @@ export default function LoginPage() {
         newPassword,
         flow: 'reset-verification',
       });
-      navigateAfterAuth(searchParams.get('next') ?? '/');
+      navigateAfterAuth(safeRedirectTarget(searchParams.get('next')));
     } catch (err) {
       setError(readError(err, 'Reset failed. Try the code again or request a new one.'));
     } finally {

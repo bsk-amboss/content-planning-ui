@@ -1,5 +1,5 @@
-import { fetchQuery } from 'convex/nextjs';
 import { connection } from 'next/server';
+import { fetchQueryAsUser } from '@/lib/convex/server';
 import type { CodeCategory } from '@/lib/repositories/types';
 import { api } from '../../../convex/_generated/api';
 
@@ -8,7 +8,7 @@ import { api } from '../../../convex/_generated/api';
 // existing SSR pages keep using this snapshot helper.
 export async function listCategories(slug: string): Promise<CodeCategory[]> {
   await connection();
-  const rows = await fetchQuery(api.categories.list, { slug });
+  const rows = await fetchQueryAsUser(api.categories.list, { slug });
   // Strip Convex's `_id` / `_creationTime` so the type matches the legacy
   // CodeCategory shape consumers expect. JSON-string blob fields aren't on
   // this table — codeCategories only stores arrays of plain strings.

@@ -9,19 +9,12 @@
  * Milestones (`specialties.milestones`) are NOT seeded here — run
  * `pnpm db:import-milestones -- <slug> <file>` separately.
  */
-import { ConvexHttpClient } from 'convex/browser';
-import { env } from '@/env';
 import { buildXlsxRegistry } from '@/lib/repositories';
 import { createXlsxRepos } from '@/lib/repositories/xlsx/repos';
 import { api } from '../convex/_generated/api';
+import { convexClient } from './_lib/convex';
 
 async function main() {
-  if (!env.NEXT_PUBLIC_CONVEX_URL) {
-    throw new Error(
-      'NEXT_PUBLIC_CONVEX_URL is not set — run `npx convex dev` once to provision the deployment.',
-    );
-  }
-
   const registry = buildXlsxRegistry();
   if (registry.length === 0) {
     throw new Error(
@@ -29,7 +22,7 @@ async function main() {
     );
   }
 
-  const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
+  const convex = convexClient();
   const repos = createXlsxRepos(registry);
 
   console.log('seeding specialties …');

@@ -1,4 +1,4 @@
-import { preloadQuery } from 'convex/nextjs';
+import { preloadQueryAsUser } from '@/lib/convex/server';
 import { getConsolidationLockState } from '@/lib/data/codes';
 import { api } from '../../../../../convex/_generated/api';
 import { CodesViewClient } from './codes-view-client';
@@ -16,8 +16,8 @@ export default async function CodesPage({
   // round trip.
   const [lock, preloadedCodes, preloadedInFlight] = await Promise.all([
     getConsolidationLockState(slug),
-    preloadQuery(api.codes.list, { slug }),
-    preloadQuery(api.codes.inFlight, { slug }),
+    preloadQueryAsUser(api.codes.list, { slug }),
+    preloadQueryAsUser(api.codes.inFlight, { slug }),
   ]);
 
   return (

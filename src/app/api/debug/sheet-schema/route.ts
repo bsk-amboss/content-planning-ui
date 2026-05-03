@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { env } from '@/env';
+import { requireUserResponse } from '@/lib/auth';
 import { getSpecialtyRegistry } from '@/lib/repositories';
 import { readTabRows as readSheetsTab } from '@/lib/repositories/sheets/client';
 import { readTabRows as readXlsxTab } from '@/lib/repositories/xlsx/client';
@@ -8,6 +9,8 @@ export async function GET(request: Request) {
   if (env.NODE_ENV === 'production') {
     return new NextResponse('Not Found', { status: 404 });
   }
+  const guard = await requireUserResponse();
+  if (guard) return guard;
   const url = new URL(request.url);
   const slug = url.searchParams.get('slug');
   const tab = url.searchParams.get('tab');

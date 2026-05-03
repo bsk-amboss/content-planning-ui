@@ -1,9 +1,13 @@
 /**
  * Stage-reset helpers. Resetting a stage clears its output artifacts AND
  * cascades through every downstream stage. Used by /api/workflows/reset-stage.
+ *
+ * These run in the Next.js request context (API route handlers), so Convex
+ * calls go through `fetchMutationAsUser` and the signed-in user's JWT
+ * authorizes the writes.
  */
 
-import { fetchMutation } from 'convex/nextjs';
+import { fetchMutationAsUser } from '@/lib/convex/server';
 import { api } from '../../../../convex/_generated/api';
 import type { StageName } from './db-writes';
 
@@ -28,32 +32,36 @@ export function stagesToReset(stage: StageName): StageName[] {
 async function clearEditorDataForStage(stage: StageName, specialtySlug: string) {
   switch (stage) {
     case 'extract_codes':
-      await fetchMutation(api.codes.deleteForSpecialty, { slug: specialtySlug });
+      await fetchMutationAsUser(api.codes.deleteForSpecialty, { slug: specialtySlug });
       break;
     case 'extract_milestones':
-      await fetchMutation(api.specialties.updateMilestones, {
+      await fetchMutationAsUser(api.specialties.updateMilestones, {
         slug: specialtySlug,
         milestones: undefined,
       });
       break;
     case 'map_codes':
-      await fetchMutation(api.codes.clearAllMappingsForSpecialty, {
+      await fetchMutationAsUser(api.codes.clearAllMappingsForSpecialty, {
         slug: specialtySlug,
       });
       break;
     case 'consolidate_primary':
-      await fetchMutation(api.articles.deleteNewForSpecialty, { slug: specialtySlug });
-      await fetchMutation(api.articles.deleteUpdatesForSpecialty, {
+      await fetchMutationAsUser(api.articles.deleteNewForSpecialty, {
+        slug: specialtySlug,
+      });
+      await fetchMutationAsUser(api.articles.deleteUpdatesForSpecialty, {
         slug: specialtySlug,
       });
       break;
     case 'consolidate_articles':
-      await fetchMutation(api.articles.deleteConsolidatedForSpecialty, {
+      await fetchMutationAsUser(api.articles.deleteConsolidatedForSpecialty, {
         slug: specialtySlug,
       });
       break;
     case 'consolidate_sections':
-      await fetchMutation(api.sections.deleteForSpecialty, { slug: specialtySlug });
+      await fetchMutationAsUser(api.sections.deleteForSpecialty, {
+        slug: specialtySlug,
+      });
       break;
   }
 }
@@ -71,9 +79,9 @@ export async function resetStageCascade(input: {
   const toReset = stagesToReset(input.stage);
   for (const s of toReset) {
     await clearEditorDataForStage(s, input.specialtySlug);
-    await fetchMutation(api.pipeline.resetStage, { runId: input.runId, stage: s });
+    await fetchMutationAsUser(api.pipeline.resetStage, { runId: input.runId, stage: s });
   }
-  await fetchMutation(api.pipeline.cancelStaleRunsForSpecialty, {
+  await fetchMutationAsUser(api.pipeline.cancelStaleRunsForSpecialty, {
     slug: input.specialtySlug,
   });
   return toReset;
@@ -86,7 +94,7 @@ export async function resetStageCascade(input: {
  * keep the data they have. Returns the count of runs cancelled.
  */
 export async function clearStaleRunsForSpecialty(specialtySlug: string): Promise<number> {
-  const result = await fetchMutation(api.pipeline.cancelStaleRunsForSpecialty, {
+  const result = await fetchMutationAsUser(api.pipeline.cancelStaleRunsForSpecialty, {
     slug: specialtySlug,
   });
   return result.cancelled;

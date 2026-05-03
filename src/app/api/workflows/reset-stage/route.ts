@@ -14,6 +14,7 @@
 
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
+import { requireUserResponse } from '@/lib/auth';
 import type { StageName } from '@/lib/workflows/lib/db-writes';
 import { resetStageCascade } from '@/lib/workflows/lib/reset';
 
@@ -33,6 +34,8 @@ type Body = {
 };
 
 export async function POST(req: NextRequest) {
+  const guard = await requireUserResponse();
+  if (guard) return guard;
   const body = (await req.json().catch(() => ({}))) as Body;
   if (!body.runId || !body.specialtySlug) {
     return NextResponse.json(

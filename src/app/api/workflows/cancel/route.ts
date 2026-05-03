@@ -7,10 +7,11 @@
  *   body: { runId: string; specialtySlug: string; stage: StageName }
  */
 
-import { fetchQuery } from 'convex/nextjs';
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
 import { getRun } from 'workflow/api';
+import { requireUserResponse } from '@/lib/auth';
+import { fetchQueryAsUser } from '@/lib/convex/server';
 import type { StageName } from '@/lib/workflows/lib/db-writes';
 import { resetStageCascade } from '@/lib/workflows/lib/reset';
 import { api } from '../../../../../convex/_generated/api';
@@ -31,6 +32,8 @@ type Body = {
 };
 
 export async function POST(req: NextRequest) {
+  const guard = await requireUserResponse();
+  if (guard) return guard;
   const body = (await req.json().catch(() => ({}))) as Body;
   if (!body.runId || !body.specialtySlug) {
     return NextResponse.json(
@@ -47,7 +50,7 @@ export async function POST(req: NextRequest) {
 
   console.log('[cancel-stage]', body);
 
-  const run = await fetchQuery(api.pipeline.getRun, { runId: body.runId });
+  const run = await fetchQueryAsUser(api.pipeline.getRun, { runId: body.runId });
 
   // Reset state first — this is what unblocks the UI. The workflow runtime
   // cancel is fire-and-forget below.

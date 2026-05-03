@@ -19,9 +19,8 @@
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ConvexHttpClient } from 'convex/browser';
-import { env } from '@/env';
 import { api } from '../convex/_generated/api';
+import { convexClient } from './_lib/convex';
 
 type RawArticle = { id: string; title: string; contentBase?: string };
 type RawSection = { id: string; articleId: string; title: string };
@@ -65,8 +64,6 @@ async function main() {
     );
     process.exit(1);
   }
-  if (!env.NEXT_PUBLIC_CONVEX_URL) throw new Error('NEXT_PUBLIC_CONVEX_URL is not set');
-
   const absPath = resolve(process.cwd(), pathArg);
   console.log(`[refresh] reading ${absPath}`);
   const exp = readExport(absPath);
@@ -74,7 +71,7 @@ async function main() {
     `[refresh] ${exp.articles.length} articles, ${exp.sections.length} sections`,
   );
 
-  const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
+  const convex = convexClient();
   const updatedAt = Date.now();
 
   await chunked(exp.articles, UPSERT_CHUNK, (chunk) =>

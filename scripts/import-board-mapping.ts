@@ -14,10 +14,9 @@
  * a specialty seeded from xlsx keeps its lineage.
  */
 
-import { ConvexHttpClient } from 'convex/browser';
-import { env } from '@/env';
 import { readTabRows } from '@/lib/repositories/xlsx/client';
 import { api } from '../convex/_generated/api';
+import { convexClient } from './_lib/convex';
 
 const WORKBOOK = 'board_specialty_mapping_competencies.xlsx';
 const MASTER_TAB = 'master';
@@ -97,8 +96,7 @@ async function readRegionSpecialties(region: string): Promise<SpecialtyRow[]> {
 
 async function main() {
   const filter = new Set(process.argv.slice(2).map((s) => s.toLowerCase()));
-  if (!env.NEXT_PUBLIC_CONVEX_URL) throw new Error('NEXT_PUBLIC_CONVEX_URL is not set');
-  const convex = new ConvexHttpClient(env.NEXT_PUBLIC_CONVEX_URL);
+  const convex = convexClient();
   const regions = await readRegions();
   console.log('[import] master regions:', [...regions.keys()]);
   if (filter.size > 0) console.log('[import] filter:', [...filter]);
