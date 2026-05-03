@@ -18,7 +18,7 @@
 import { revalidateTag } from 'next/cache';
 import { type NextRequest, NextResponse } from 'next/server';
 import { resumeHook } from 'workflow/api';
-import { requireUserResponse } from '@/lib/auth';
+import { getCurrentUser } from '@/lib/auth';
 import { type ApprovableStage, approvalToken } from '@/lib/workflows/lib/approval';
 
 type Body = {
@@ -26,7 +26,9 @@ type Body = {
   specialtySlug?: string;
   stage?: ApprovableStage;
   approved?: boolean;
-  approvedBy?: string;
+  // `approvedBy` is intentionally NOT in the body shape — the server stamps
+  // the authenticated user's email on the audit trail, never trusts a value
+  // from the client.
   note?: string;
 };
 
@@ -37,8 +39,10 @@ const APPROVABLE_STAGES: ReadonlySet<ApprovableStage> = new Set([
 ]);
 
 export async function POST(req: NextRequest) {
-  const guard = await requireUserResponse();
-  if (guard) return guard;
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
   const body = (await req.json().catch(() => ({}))) as Body;
   if (!body.runId) {
     return NextResponse.json({ error: 'runId required' }, { status: 400 });
@@ -53,15 +57,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'approved (boolean) required' }, { status: 400 });
   }
 
+  const approvedBy = user.email ?? user.name ?? user._id;
   const token = approvalToken(body.runId, body.stage);
   console.log('[approve] resuming hook', {
     runId: body.runId,
     stage: body.stage,
     approved: body.approved,
+    approvedBy,
   });
   await resumeHook(token, {
     approved: body.approved,
-    approvedBy: body.approvedBy,
+    approvedBy,
     note: body.note,
   });
 

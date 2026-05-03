@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import type { Doc } from './_generated/dataModel';
 import { mutation, query } from './_generated/server';
 import { requireUserOrService, serviceSecretArg } from './_lib/access';
+import { auth } from './auth';
 
 // Pipeline state. Workflow code (`'use step'` blocks under
 // src/lib/workflows/) calls these mutations to persist run/stage progression
@@ -314,6 +315,10 @@ export const createRun = mutation({
   },
   handler: async (ctx, { specialtySlug, workflowRunId, _secret }) => {
     await requireUserOrService(ctx, _secret);
+    // When the request authenticated as a user (not via service secret),
+    // record who triggered the run for the audit trail. Workflow-internal
+    // creates have no user context and leave this undefined.
+    const createdByUserId = (await auth.getUserId(ctx)) ?? undefined;
     const now = Date.now();
     const id = await ctx.db.insert('pipelineRuns', {
       specialtySlug,
@@ -322,6 +327,7 @@ export const createRun = mutation({
       startedAt: now,
       updatedAt: now,
       mappingCheckIds: true,
+      createdByUserId,
     });
     return { id: id as string };
   },
