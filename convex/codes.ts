@@ -1,13 +1,11 @@
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 import { requireUserOrService, serviceSecretArg } from './_lib/access';
-
-// Note: the JSON-stringified blob fields (`articlesWhereCoverageIs`,
-// `existingArticleUpdates`, `newArticlesNeeded`) are returned to clients
-// as-is. Parsing happens at the boundary in the consumer (see
-// `src/lib/convex-blobs.ts`) — if we parsed inside the handler the
-// returned object would carry unicode field names, and Convex's wire format
-// only accepts ASCII field names anywhere in the payload.
+import {
+  coveredSectionShape,
+  newArticleShape,
+  sectionUpdateShape,
+} from './schema/_shared';
 
 /**
  * Read every code for a specialty. Replaces the Drizzle `listCodes` path —
@@ -137,11 +135,9 @@ export const writeMapping = mutation({
     notes: v.optional(v.string()),
     gaps: v.optional(v.string()),
     improvements: v.optional(v.string()),
-    // JSON-stringified arrays/records — see schema.ts comment. Workflow
-    // callers must `JSON.stringify(...)` before passing.
-    articlesWhereCoverageIs: v.optional(v.string()),
-    existingArticleUpdates: v.optional(v.string()),
-    newArticlesNeeded: v.optional(v.string()),
+    articlesWhereCoverageIs: v.optional(v.array(coveredSectionShape)),
+    existingArticleUpdates: v.optional(v.array(sectionUpdateShape)),
+    newArticlesNeeded: v.optional(v.array(newArticleShape)),
     _secret: serviceSecretArg,
   },
   handler: async (ctx, { slug, code, _secret, ...mapping }) => {

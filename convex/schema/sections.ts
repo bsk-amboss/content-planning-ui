@@ -1,6 +1,6 @@
 import { defineTable } from 'convex/server';
 import { v } from 'convex/values';
-import { jsonBlob, jsonBlobString } from './_shared';
+import { jsonBlob } from './_shared';
 
 export const sectionsTables = {
   consolidatedSections: defineTable({
@@ -19,7 +19,7 @@ export const sectionsTables = {
     unique_title: v.optional(v.string()),
     uniqueId: v.optional(v.string()),
     numCodes: v.optional(v.number()),
-    codes: jsonBlobString,
+    codes: v.optional(v.array(v.any())),
     previousSectionNames: v.optional(jsonBlob),
     exists: v.optional(v.boolean()),
     sectionId: v.optional(v.string()),

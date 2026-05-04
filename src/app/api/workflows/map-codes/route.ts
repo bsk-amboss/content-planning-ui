@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
     patch: {
       mappingInstructions,
       mappingCheckIds: checkAgainstLibrary,
-      ...(filter ? { mappingFilter: JSON.stringify(filter) } : {}),
+      ...(filter ? { mappingFilter: filter } : {}),
     },
   });
   await fetchMutationAsUser(api.pipeline.initStage, { runId, stage: 'map_codes' });

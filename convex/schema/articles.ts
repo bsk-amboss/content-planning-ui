@@ -1,6 +1,6 @@
 import { defineTable } from 'convex/server';
 import { v } from 'convex/values';
-import { articleSuggestionFields, jsonBlob, jsonBlobString } from './_shared';
+import { articleSuggestionFields, jsonBlob } from './_shared';
 
 export const articlesTables = {
   consolidatedArticles: defineTable({
@@ -11,7 +11,7 @@ export const articlesTables = {
     category: v.optional(v.string()),
     articleId: v.optional(v.string()),
     numCodes: v.optional(v.number()),
-    codes: jsonBlobString,
+    codes: v.optional(v.array(v.any())),
     previousArticleTitleSuggestions: v.optional(jsonBlob),
     overallCoverage: v.optional(v.number()),
     overallImportance: v.optional(v.number()),

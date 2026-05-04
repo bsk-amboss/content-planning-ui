@@ -10,6 +10,10 @@ import { derivePhase, type Phase } from '@/lib/phase';
 import type { StageName } from '@/lib/workflows/lib/db-writes';
 import { api } from '../../../convex/_generated/api';
 
+export type ContentInputRef = { source: string; url: string };
+
+export type MappingFilterRef = { categories?: string[]; codes?: string[] };
+
 export type PipelineRunRow = {
   id: string;
   specialtySlug: string;
@@ -19,13 +23,13 @@ export type PipelineRunRow = {
   updatedAt: Date;
   finishedAt: Date | null;
   error: string | null;
-  contentOutlineUrls: unknown;
+  contentOutlineUrls: ContentInputRef[] | null;
   identifyModulesInstructions: string | null;
   extractCodesInstructions: string | null;
   milestonesInstructions: string | null;
   mappingInstructions: string | null;
   mappingCheckIds: boolean;
-  mappingFilter: { categories?: string[]; codes?: string[] } | null;
+  mappingFilter: MappingFilterRef | null;
 };
 
 export type PipelineStageRow = {
@@ -55,7 +59,7 @@ export type PipelineEventRow = {
 
 export type StageContext = {
   stage: PipelineStageRow;
-  runUrls: unknown;
+  runUrls: ContentInputRef[] | null;
   events: PipelineEventRow[];
 };
 
@@ -68,13 +72,13 @@ type ConvexRun = {
   updatedAt: number;
   finishedAt?: number;
   error?: string;
-  contentOutlineUrls?: string;
+  contentOutlineUrls?: ContentInputRef[];
   identifyModulesInstructions?: string;
   extractCodesInstructions?: string;
   milestonesInstructions?: string;
   mappingInstructions?: string;
   mappingCheckIds: boolean;
-  mappingFilter?: string;
+  mappingFilter?: MappingFilterRef;
 };
 
 type ConvexStage = {
@@ -121,13 +125,13 @@ function toRun(r: ConvexRun): PipelineRunRow {
     updatedAt: new Date(r.updatedAt),
     finishedAt: r.finishedAt !== undefined ? new Date(r.finishedAt) : null,
     error: r.error ?? null,
-    contentOutlineUrls: parseJson(r.contentOutlineUrls),
+    contentOutlineUrls: r.contentOutlineUrls ?? null,
     identifyModulesInstructions: r.identifyModulesInstructions ?? null,
     extractCodesInstructions: r.extractCodesInstructions ?? null,
     milestonesInstructions: r.milestonesInstructions ?? null,
     mappingInstructions: r.mappingInstructions ?? null,
     mappingCheckIds: r.mappingCheckIds,
-    mappingFilter: parseJson(r.mappingFilter),
+    mappingFilter: r.mappingFilter ?? null,
   };
 }
 
@@ -205,12 +209,12 @@ export async function getLatestStageContexts(
   for (const [stageName, ctx] of Object.entries(raw)) {
     const c = ctx as {
       stage: ConvexStage;
-      runUrls: string | null;
+      runUrls: ContentInputRef[] | null;
       events: ConvexEvent[];
     };
     out[stageName as StageName] = {
       stage: toStage(c.stage),
-      runUrls: parseJson<unknown>(c.runUrls ?? undefined),
+      runUrls: c.runUrls ?? null,
       events: c.events.map(toEvent),
     };
   }

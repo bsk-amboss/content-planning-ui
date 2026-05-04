@@ -67,29 +67,22 @@ async function main() {
     ]);
 
     // Pre-trim fields the Convex schema doesn't carry (`fullJsonOutput`,
-    // `metadata`, `index`) and stringify blob fields whose nested keys may
-    // contain unicode (Convex requires ASCII-only field names).
+    // `metadata`, `index`). Blob fields are typed arrays now (Phase B2) —
+    // no JSON.stringify boundary. The xlsx fixtures still carry the LLM's
+    // `record<title, id>` shape inside `articlesWhereCoverageIs[].sections`;
+    // normalise to array form so the validator accepts it (mirrors the
+    // workflow-side normaliser in `src/lib/workflows/lib/db-writes.ts`).
     const codeRows = codes.map(
       ({ index: _i, fullJsonOutput: _fj, metadata: _md, ...rest }) =>
-        stringifyBlobs(stripUndef(rest), [
-          'articlesWhereCoverageIs',
-          'existingArticleUpdates',
-          'newArticlesNeeded',
-        ]),
+        normaliseCodeMappingShape(stripUndef(rest)),
     );
     const categoryRows = categories.map((r) => stripUndef(r));
     const consolidatedRows = consolidatedArticles.map(({ index: _i, ...r }) =>
-      stringifyBlobs(stripUndef(r), ['codes']),
+      stripUndef(r),
     );
-    const newRows = newArticles.map(({ index: _i, ...r }) =>
-      stringifyBlobs(stripUndef(r), ['codes']),
-    );
-    const updateRows = updateArticles.map(({ index: _i, ...r }) =>
-      stringifyBlobs(stripUndef(r), ['codes']),
-    );
-    const sectionRows = sections.map(({ index: _i, ...r }) =>
-      stringifyBlobs(stripUndef(r), ['codes']),
-    );
+    const newRows = newArticles.map(({ index: _i, ...r }) => stripUndef(r));
+    const updateRows = updateArticles.map(({ index: _i, ...r }) => stripUndef(r));
+    const sectionRows = sections.map(({ index: _i, ...r }) => stripUndef(r));
 
     if (codeRows.length)
       await chunked(codeRows, 25, (chunk) =>
@@ -134,13 +127,80 @@ function stripUndef<T extends Record<string, unknown>>(obj: T): Partial<T> {
   return out as Partial<T>;
 }
 
-function stringifyBlobs<T extends Record<string, unknown>>(obj: T, fields: string[]): T {
-  const out: Record<string, unknown> = { ...obj };
-  for (const f of fields) {
-    const v = out[f];
-    if (v !== undefined && v !== null && typeof v !== 'string') {
-      out[f] = JSON.stringify(v);
-    }
+type Anyish = Record<string, unknown>;
+
+function pickStr(o: Anyish, k: string): string | undefined {
+  const v = o[k];
+  return typeof v === 'string' ? v : undefined;
+}
+function pickNum(o: Anyish, k: string): number | undefined {
+  const v = o[k];
+  return typeof v === 'number' ? v : undefined;
+}
+function pickBool(o: Anyish, k: string): boolean | undefined {
+  const v = o[k];
+  return typeof v === 'boolean' ? v : undefined;
+}
+
+/**
+ * The xlsx fixtures hold the original LLM output for these blobs (parsed via
+ * Zod `.passthrough()`), so they may carry extra keys and the LLM's
+ * `record<title, id>` form for `coveredSections.sections`. Convex's typed
+ * validators are strict: extra keys are rejected. This cleaner trims each
+ * entry down to the validator-allowed shape and converts the record-form
+ * sections to array form (mirroring `normaliseCoveredSections` in
+ * `src/lib/workflows/lib/db-writes.ts`).
+ *
+ * The workflow path doesn't need this — Zod's default `.parse()` on the
+ * `MappingOutputSchema` already strips unknown keys.
+ */
+function normaliseCodeMappingShape<T extends Record<string, unknown>>(row: T): T {
+  const out: Record<string, unknown> = { ...row };
+  if (Array.isArray(row.articlesWhereCoverageIs)) {
+    out.articlesWhereCoverageIs = (row.articlesWhereCoverageIs as Anyish[]).map((b) => {
+      const s = b.sections;
+      let sections: Array<{ sectionTitle?: string; sectionId?: string }> | undefined;
+      if (Array.isArray(s)) {
+        sections = s.map((entry) => {
+          const o = (entry ?? {}) as Anyish;
+          return {
+            sectionTitle: pickStr(o, 'sectionTitle'),
+            sectionId: pickStr(o, 'sectionId'),
+          };
+        });
+      } else if (s && typeof s === 'object') {
+        sections = Object.entries(s as Anyish).map(([title, id]) => ({
+          sectionTitle: title,
+          sectionId: typeof id === 'string' ? id : undefined,
+        }));
+      }
+      return {
+        articleTitle: pickStr(b, 'articleTitle'),
+        articleId: pickStr(b, 'articleId'),
+        sections,
+      };
+    });
+  }
+  if (Array.isArray(row.existingArticleUpdates)) {
+    out.existingArticleUpdates = (row.existingArticleUpdates as Anyish[]).map((b) => ({
+      articleTitle: pickStr(b, 'articleTitle'),
+      articleId: pickStr(b, 'articleId'),
+      sections: Array.isArray(b.sections)
+        ? (b.sections as Anyish[]).map((s) => ({
+            sectionTitle: pickStr(s, 'sectionTitle'),
+            sectionId: pickStr(s, 'sectionId'),
+            exists: pickBool(s, 'exists'),
+            changes: pickStr(s, 'changes'),
+            importance: pickNum(s, 'importance'),
+          }))
+        : undefined,
+    }));
+  }
+  if (Array.isArray(row.newArticlesNeeded)) {
+    out.newArticlesNeeded = (row.newArticlesNeeded as Anyish[]).map((b) => ({
+      articleTitle: pickStr(b, 'articleTitle'),
+      importance: pickNum(b, 'importance'),
+    }));
   }
   return out as T;
 }

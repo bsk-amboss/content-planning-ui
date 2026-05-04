@@ -1,11 +1,15 @@
 import { defineTable } from 'convex/server';
 import { v } from 'convex/values';
-import { jsonBlobString } from './_shared';
+import { contentInputShape, jsonBlobString, mappingFilterShape } from './_shared';
 
 // Pipeline state. Vercel Workflow durability is managed by the runtime;
 // these tables are application-level state the workflow code chooses to
 // persist (run history, stage progression, structured event log, and the
 // staging table for codes pending approval).
+//
+// `outputSummary` / `draftPayload` / `metrics` / `metadata` stay as
+// JSON-stringified strings — their shape varies per stage / per event and
+// pinning them to a Convex validator would impose churn for no real benefit.
 
 export const pipelineTables = {
   pipelineRuns: defineTable({
@@ -16,13 +20,13 @@ export const pipelineTables = {
     updatedAt: v.number(),
     finishedAt: v.optional(v.number()),
     error: v.optional(v.string()),
-    contentOutlineUrls: jsonBlobString,
+    contentOutlineUrls: v.optional(v.array(contentInputShape)),
     identifyModulesInstructions: v.optional(v.string()),
     extractCodesInstructions: v.optional(v.string()),
     milestonesInstructions: v.optional(v.string()),
     mappingInstructions: v.optional(v.string()),
     mappingCheckIds: v.boolean(),
-    mappingFilter: jsonBlobString,
+    mappingFilter: v.optional(mappingFilterShape),
     // Actor audit trail. Set when a user triggers the run via an authenticated
     // request; left undefined for workflow-internal create paths and legacy
     // rows from before this field existed.

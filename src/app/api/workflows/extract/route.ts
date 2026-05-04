@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
   await fetchMutationAsUser(api.pipeline.updateRun, {
     runId,
     patch: {
-      contentOutlineUrls: JSON.stringify(inputs),
+      contentOutlineUrls: inputs,
       ...(identifyInstructions
         ? { identifyModulesInstructions: identifyInstructions }
         : {}),

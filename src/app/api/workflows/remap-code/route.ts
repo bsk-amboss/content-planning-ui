@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
     patch: {
       mappingInstructions,
       mappingCheckIds: checkAgainstLibrary,
-      mappingFilter: JSON.stringify(filter),
+      mappingFilter: { codes: [...filter.codes] },
     },
   });
   await fetchMutationAsUser(api.pipeline.initStage, { runId, stage: 'map_codes' });
