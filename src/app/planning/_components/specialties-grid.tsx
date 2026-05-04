@@ -17,7 +17,7 @@ export function SpecialtiesGridView({
     return (
       <Callout
         type="info"
-        text="No specialties registered yet. Add one below, or run `npm run db:import-board -- <slug>` to import from the board mapping xlsx."
+        text="No specialties registered yet. Add one below."
       />
     );
   }

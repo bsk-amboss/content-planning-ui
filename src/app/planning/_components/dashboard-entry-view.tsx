@@ -28,7 +28,7 @@ export function DashboardEntryView({ specialties }: { specialties: Specialty[] }
       {specialties.length === 0 ? (
         <Callout
           type="info"
-          text="No specialties registered. Set MAPPING_SHEET_IDS in .env.local or place anesthesiology_mapping.xlsx at the project root."
+          text="No specialties registered."
         />
       ) : (
         <SpecialtyEntry specialties={specialties} initialSlug={lastSlug} />
