@@ -41,14 +41,23 @@ export type CatalogEntry = {
   label: string;
 };
 
+// Model identifiers must match exactly what the provider's generateContent /
+// messages endpoint accepts. For Google's Gemini, both Gemini 3 and the 3.1
+// line are still in preview (the `-preview` suffix is required); the GA
+// `gemini-3-pro` was deprecated 2026-03-09 and Google recommends
+// `gemini-3.1-pro-preview` as its replacement. See
+// https://ai.google.dev/gemini-api/docs/models for the canonical list.
 export const MODEL_CATALOG: readonly CatalogEntry[] = [
   {
     provider: 'google',
     model: 'gemini-3.1-pro-preview',
     label: 'Gemini 3.1 Pro Preview',
   },
-  { provider: 'google', model: 'gemini-3-pro', label: 'Gemini 3 Pro' },
-  { provider: 'google', model: 'gemini-3-flash', label: 'Gemini 3 Flash' },
+  {
+    provider: 'google',
+    model: 'gemini-3-flash-preview',
+    label: 'Gemini 3 Flash Preview',
+  },
   { provider: 'anthropic', model: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
   { provider: 'anthropic', model: 'claude-sonnet-4-7', label: 'Claude Sonnet 4.7' },
   { provider: 'openai', model: 'gpt-5.5', label: 'GPT-5.5' },

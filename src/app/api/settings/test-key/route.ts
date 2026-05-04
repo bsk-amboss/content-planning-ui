@@ -22,7 +22,7 @@ import { api } from '../../../../../convex/_generated/api';
 type Provider = 'google' | 'anthropic' | 'openai';
 
 const PING_MODEL: Record<Provider, string> = {
-  google: 'gemini-3-flash',
+  google: 'gemini-3-flash-preview',
   anthropic: 'claude-haiku-4-5',
   openai: 'gpt-5.5',
 };
