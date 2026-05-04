@@ -338,6 +338,43 @@ export async function listUnmappedCodes(
   return rows;
 }
 
+/**
+ * Coerce a `coveredSections[].sections` block into the typed array form the
+ * Convex schema expects. The mapping prompt encourages a `record<title, id>`
+ * shape and Convex requires ASCII-only field names, so unicode section
+ * titles (e.g. "Vitamin B₁₂") would fail at validation if stored as a
+ * record. The corresponding read-side fallback in `code-detail-modal.tsx`
+ * is kept to handle any pre-normalisation rows that survive a wipe gap.
+ */
+function normaliseCoveredSections(
+  blocks: MappingOutput['coverage']['coveredSections'],
+): Array<{
+  articleTitle?: string;
+  articleId?: string;
+  sections?: Array<{ sectionTitle?: string; sectionId?: string }>;
+}> {
+  return (blocks ?? []).map((b) => {
+    const s = b.sections;
+    let sections: Array<{ sectionTitle?: string; sectionId?: string }> | undefined;
+    if (Array.isArray(s)) {
+      sections = s.map((row) => ({
+        sectionTitle: row.sectionTitle,
+        sectionId: row.sectionId,
+      }));
+    } else if (s && typeof s === 'object') {
+      sections = Object.entries(s).map(([sectionTitle, sectionId]) => ({
+        sectionTitle,
+        sectionId: typeof sectionId === 'string' ? sectionId : undefined,
+      }));
+    }
+    return {
+      articleTitle: b.articleTitle,
+      articleId: b.articleId,
+      sections,
+    };
+  });
+}
+
 export async function writeCodeMapping(
   specialtySlug: string,
   code: string,
@@ -361,14 +398,10 @@ export async function writeCodeMapping(
     gaps: mapping.coverage.gaps || undefined,
     improvements: mapping.suggestion.improvement || undefined,
     articlesWhereCoverageIs: mapping.coverage.coveredSections
-      ? JSON.stringify(mapping.coverage.coveredSections)
+      ? normaliseCoveredSections(mapping.coverage.coveredSections)
       : undefined,
-    existingArticleUpdates: mapping.suggestion.sectionUpdates
-      ? JSON.stringify(mapping.suggestion.sectionUpdates)
-      : undefined,
-    newArticlesNeeded: mapping.suggestion.newArticlesNeeded
-      ? JSON.stringify(mapping.suggestion.newArticlesNeeded)
-      : undefined,
+    existingArticleUpdates: mapping.suggestion.sectionUpdates ?? undefined,
+    newArticlesNeeded: mapping.suggestion.newArticlesNeeded ?? undefined,
     _secret: workflowSecret(),
   });
 }

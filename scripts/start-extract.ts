@@ -19,10 +19,11 @@ async function main() {
     process.exit(1);
   }
 
+  const inputs = urls.map((url) => ({ source: 'ab', url }));
   const res = await fetch(`${DEV_URL}/api/workflows/extract`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ specialtySlug: slug, contentOutlineUrls: urls }),
+    body: JSON.stringify({ specialtySlug: slug, inputs }),
   });
 
   const body = await res.json().catch(() => ({}));

@@ -1,6 +1,5 @@
 import { connection } from 'next/server';
 import { fetchQueryAsUser } from '@/lib/convex/server';
-import { hydrateCodes } from '@/lib/convex-blobs';
 import { api } from '../../../convex/_generated/api';
 
 /**
@@ -62,7 +61,7 @@ export type CodeCategorySummary = {
  */
 export async function listCodeCategories(slug: string): Promise<CodeCategorySummary[]> {
   await connection();
-  const rows = hydrateCodes(await fetchQueryAsUser(api.codes.list, { slug }));
+  const rows = await fetchQueryAsUser(api.codes.list, { slug });
   const totals = new Map<string, { total: number; unmapped: number }>();
   for (const r of rows) {
     const cat = r.category ?? '(uncategorized)';

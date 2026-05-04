@@ -3,6 +3,7 @@ import type { Doc } from './_generated/dataModel';
 import { mutation, query } from './_generated/server';
 import { requireUserOrService, serviceSecretArg } from './_lib/access';
 import { auth } from './auth';
+import { contentInputShape, mappingFilterShape } from './schema/_shared';
 
 // Pipeline state. Workflow code (`'use step'` blocks under
 // src/lib/workflows/) calls these mutations to persist run/stage progression
@@ -99,12 +100,13 @@ export const getLatestStageContexts = query({
       .query('pipelineRuns')
       .withIndex('by_specialty', (q) => q.eq('specialtySlug', slug))
       .collect();
+    type RunUrls = Doc<'pipelineRuns'>['contentOutlineUrls'];
     if (runs.length === 0)
       return {} as Record<
         string,
         {
           stage: Doc<'pipelineStages'>;
-          runUrls: string | null;
+          runUrls: RunUrls | null;
           events: Doc<'pipelineEvents'>[];
         }
       >;
@@ -146,7 +148,7 @@ export const getLatestStageContexts = query({
       string,
       {
         stage: Doc<'pipelineStages'>;
-        runUrls: string | null;
+        runUrls: RunUrls | null;
         events: Doc<'pipelineEvents'>[];
       }
     > = {};
@@ -341,13 +343,13 @@ export const updateRun = mutation({
       workflowRunId: v.optional(v.string()),
       finishedAt: v.optional(v.number()),
       error: v.optional(v.union(v.string(), v.null())),
-      contentOutlineUrls: v.optional(v.string()),
+      contentOutlineUrls: v.optional(v.array(contentInputShape)),
       identifyModulesInstructions: v.optional(v.string()),
       extractCodesInstructions: v.optional(v.string()),
       milestonesInstructions: v.optional(v.union(v.string(), v.null())),
       mappingInstructions: v.optional(v.union(v.string(), v.null())),
       mappingCheckIds: v.optional(v.boolean()),
-      mappingFilter: v.optional(v.string()),
+      mappingFilter: v.optional(mappingFilterShape),
     }),
     _secret: serviceSecretArg,
   },

@@ -1,6 +1,11 @@
 import { defineTable } from 'convex/server';
 import { v } from 'convex/values';
-import { jsonBlob, jsonBlobString } from './_shared';
+import {
+  coveredSectionShape,
+  jsonBlob,
+  newArticleShape,
+  sectionUpdateShape,
+} from './_shared';
 
 export const codesTables = {
   // Editor-facing rows. fullJsonOutput, metadata, rowIndex dropped — confirmed
@@ -14,13 +19,13 @@ export const codesTables = {
     consolidationCategory: v.optional(v.string()),
     description: v.optional(v.string()),
     isInAMBOSS: v.optional(v.boolean()),
-    articlesWhereCoverageIs: jsonBlobString,
+    articlesWhereCoverageIs: v.optional(v.array(coveredSectionShape)),
     notes: v.optional(v.string()),
     gaps: v.optional(v.string()),
     coverageLevel: v.optional(v.string()),
     depthOfCoverage: v.optional(v.number()),
-    existingArticleUpdates: jsonBlobString,
-    newArticlesNeeded: jsonBlobString,
+    existingArticleUpdates: v.optional(v.array(sectionUpdateShape)),
+    newArticlesNeeded: v.optional(v.array(newArticleShape)),
     improvements: v.optional(v.string()),
   })
     .index('by_specialty', ['specialtySlug'])

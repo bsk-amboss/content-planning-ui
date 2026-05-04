@@ -2,7 +2,7 @@
 
 Single source of truth for how this app is structured, what each layer is responsible for, and where new features slot in. Read this before adding anything bigger than a one-file change.
 
-> Companion docs: [`AGENTS.md`](../AGENTS.md) (design-system + repo conventions for editors), [`docs/amboss/llms-full.txt`](amboss/llms-full.txt) (DS component reference). For ad-hoc security review, see `/security-review` (slash command) or the GitHub Action on every PR.
+> Companion docs: [`AGENTS.md`](../AGENTS.md) (design-system + repo conventions for editors), [`docs/MIGRATIONS.md`](MIGRATIONS.md) (schema-change playbook), [`docs/amboss/llms-full.txt`](amboss/llms-full.txt) (DS component reference). For ad-hoc security review, see `/security-review` (slash command) or the GitHub Action on every PR.
 
 ---
 
