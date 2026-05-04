@@ -13,8 +13,21 @@ import { fetchMutationAsUser, fetchQueryAsUser } from '@/lib/convex/server';
 import { getConsolidationLockState } from '@/lib/data/codes';
 import { approvalToken } from '@/lib/workflows/lib/approval';
 import { clearMappingForCode } from '@/lib/workflows/lib/db-writes';
+import { resolveApiKeysForRun } from '@/lib/workflows/lib/resolve-keys';
 import { mapCodesWorkflow } from '@/lib/workflows/mapping/map-codes';
 import { api } from '../../../../../convex/_generated/api';
+
+// Hardcoded for slice 4 — slice 5 lifts to per-card user choice.
+const PRIMARY_MODEL = {
+  provider: 'google',
+  model: 'gemini-3-flash',
+  reasoning: 'medium',
+} as const;
+const BACKUP_MODEL = {
+  provider: 'anthropic',
+  model: 'claude-opus-4-7',
+  reasoning: 'auto',
+} as const;
 
 type Body = {
   specialtySlug?: string;
@@ -79,6 +92,8 @@ export async function POST(req: NextRequest) {
   });
   await fetchMutationAsUser(api.pipeline.initStage, { runId, stage: 'map_codes' });
 
+  const apiKeys = await resolveApiKeysForRun(['google', 'anthropic']);
+
   const wfRun = await start(mapCodesWorkflow, [
     {
       runId,
@@ -88,6 +103,9 @@ export async function POST(req: NextRequest) {
       additionalInstructions: mappingInstructions ?? undefined,
       checkAgainstLibrary,
       filter: { codes: [code] },
+      primaryModel: PRIMARY_MODEL,
+      backupModel: BACKUP_MODEL,
+      apiKeys,
     },
   ]);
 

@@ -19,6 +19,7 @@ import {
 } from '../lib/db-writes';
 import { aggregateStageMetrics, logEvent } from '../lib/events';
 import { extractMilestonesForInputs } from '../lib/gemini';
+import type { ModelSpec, ProviderApiKeys } from '../lib/llm';
 import { revalidateSpecialtyCache } from '../lib/revalidate';
 import type { ContentInput } from '../lib/sources';
 
@@ -27,6 +28,8 @@ export type ExtractMilestonesInput = {
   specialtySlug: string;
   inputs: ContentInput[];
   milestonesInstructions?: string;
+  model: ModelSpec;
+  apiKeys: ProviderApiKeys;
 };
 
 export async function extractMilestonesWorkflow(input: ExtractMilestonesInput) {
@@ -53,6 +56,8 @@ export async function extractMilestonesWorkflow(input: ExtractMilestonesInput) {
       additionalInstructions: input.milestonesInstructions,
       runId: input.runId,
       stage: 'extract_milestones',
+      model: input.model,
+      apiKeys: input.apiKeys,
     });
 
     const totals = await aggregateStageMetrics(input.runId, 'extract_milestones');

@@ -1,25 +1,25 @@
 /**
- * Gemini-backed extraction steps (preprocessing stage).
+ * LLM-backed extraction steps (preprocessing stage).
  *
- * Ports the two n8n workflows verbatim:
+ * Originally ports of two n8n workflows:
  *   - `content_outline_extractor_subworkflow.json` → identifyModulesForUrl
  *   - `content_outline_category_extractor_subworkflow.json` → extractCodesForCategory
  *
- * Uses AI SDK v6 generateText with @ai-sdk/google, the `url_context` tool,
- * Gemini 3 Pro preview, and `Output.array` for typed structured output —
- * the SDK negotiates Gemini's native responseSchema, so we no longer parse
- * JSON by hand or worry about fenced responses.
- *
- * Falls back to stub outputs when `GOOGLE_GENERATIVE_AI_API_KEY` is absent so
- * the durability plumbing can still be exercised without creds.
+ * The model + reasoning level + API keys are now passed in by the caller via
+ * `lib/llm.ts`'s `ModelSpec` / `ProviderApiKeys`. The route handler that
+ * starts the workflow is responsible for resolving per-user keys (with env
+ * fallback) and gating on missing keys before kickoff. There's no `hasCreds`
+ * stub fallback here anymore — if the workflow runs, it's because the
+ * upstream gate found a key, and a thrown `MissingApiKeyError` from
+ * `resolveModel` would be a programmer error worth surfacing loudly.
  */
 
 import { google } from '@ai-sdk/google';
 import { generateText, Output, stepCountIs } from 'ai';
 import { z } from 'zod';
-import { env } from '@/env';
 import type { StageName } from './db-writes';
 import { logEvent } from './events';
+import { type ModelSpec, type ProviderApiKeys, resolveModel } from './llm';
 import { estimateCostUsd } from './pricing';
 import {
   DEFAULT_EXTRACT_SYSTEM_PROMPT,
@@ -33,8 +33,6 @@ export {
   DEFAULT_IDENTIFY_SYSTEM_PROMPT,
   DEFAULT_MILESTONES_SYSTEM_PROMPT,
 };
-
-const MODEL_ID = 'gemini-3.1-pro-preview';
 
 // --- shared schemas ---------------------------------------------------------
 
@@ -63,12 +61,6 @@ const ExtractCodesElementSchema = z.object({
 // budget generously.
 const MAX_STEPS = 5;
 
-export function hasGeminiCreds(): boolean {
-  return Boolean(env.GOOGLE_GENERATIVE_AI_API_KEY);
-}
-
-// Prompt composition helper shared by both phase steps.
-
 /**
  * Compose the effective system prompt: default, optionally followed by an
  * `## Additional instructions` block when the caller supplied extra guidance.
@@ -90,24 +82,16 @@ export async function identifyModulesForUrl(input: {
   specialtySlug: string;
   runId: string;
   stage: StageName;
+  model: ModelSpec;
+  apiKeys: ProviderApiKeys;
 }): Promise<{ category: string }[]> {
   'use step';
   console.log('[pipeline] identifyModulesForUrl', {
     specialtySlug: input.specialtySlug,
     url: input.url,
     source: input.source,
-    stubbed: !hasGeminiCreds(),
+    model: input.model.model,
   });
-  if (!hasGeminiCreds()) {
-    await logEvent({
-      runId: input.runId,
-      stage: input.stage,
-      level: 'info',
-      message: `Phase 1 (stub): identified 2 modules for ${input.url}`,
-      metrics: { url: input.url, source: input.source },
-    });
-    return [{ category: 'Stubbed Module A' }, { category: 'Stubbed Module B' }];
-  }
 
   const system = composePrompt(
     DEFAULT_IDENTIFY_SYSTEM_PROMPT,
@@ -120,29 +104,33 @@ ${input.url}
 Identify the base hierarchies in the document and return exclusively an output in JSON array format, with no other text.
 `.trim();
 
+  const resolved = resolveModel(input.model, input.apiKeys);
+
   await logEvent({
     runId: input.runId,
     stage: input.stage,
     level: 'info',
     message: `Phase 1: identifying modules for ${input.url}`,
-    metrics: { url: input.url, source: input.source, model: MODEL_ID },
+    metrics: {
+      url: input.url,
+      source: input.source,
+      model: resolved.modelId,
+      provider: resolved.provider,
+      reasoning: input.model.reasoning,
+    },
   });
 
   const started = Date.now();
   try {
     const result = await generateText({
-      model: google(MODEL_ID),
+      model: resolved.sdkModel,
       system,
       prompt: userMessage,
-      tools: { url_context: google.tools.urlContext({}) },
+      tools: googleUrlContextTool(input.model.provider),
       output: Output.array({ element: IdentifyModulesElementSchema }),
       stopWhen: stepCountIs(MAX_STEPS),
-      providerOptions: {
-        google: { thinkingConfig: { thinkingLevel: 'high' } },
-      },
+      providerOptions: resolved.providerOptions,
       temperature: 1,
-      topP: 0.95,
-      topK: 64,
     });
 
     const modules = result.output;
@@ -153,7 +141,7 @@ Identify the base hierarchies in the document and return exclusively an output i
       reasoningTokens: result.usage?.reasoningTokens,
       cachedInputTokens: result.usage?.cachedInputTokens,
     };
-    const costUsd = estimateCostUsd(MODEL_ID, usage);
+    const costUsd = estimateCostUsd(resolved.modelId, usage);
     await logEvent({
       runId: input.runId,
       stage: input.stage,
@@ -163,7 +151,7 @@ Identify the base hierarchies in the document and return exclusively an output i
         durationMs,
         ...usage,
         costUsd,
-        model: MODEL_ID,
+        model: resolved.modelId,
         url: input.url,
         source: input.source,
         phase: 'identify',
@@ -179,7 +167,12 @@ Identify the base hierarchies in the document and return exclusively an output i
       stage: input.stage,
       level: 'error',
       message: `Phase 1 failed for ${input.url}: ${msg}`,
-      metrics: { durationMs, url: input.url, source: input.source, model: MODEL_ID },
+      metrics: {
+        durationMs,
+        url: input.url,
+        source: input.source,
+        model: resolved.modelId,
+      },
     });
     throw e;
   }
@@ -195,6 +188,8 @@ export async function extractCodesForCategory(input: {
   additionalInstructions?: string;
   runId: string;
   stage: StageName;
+  model: ModelSpec;
+  apiKeys: ProviderApiKeys;
 }): Promise<{ category: string; description: string }[]> {
   'use step';
   console.log('[pipeline] extractCodesForCategory', {
@@ -202,21 +197,8 @@ export async function extractCodesForCategory(input: {
     url: input.url,
     source: input.source,
     category: input.category,
-    stubbed: !hasGeminiCreds(),
+    model: input.model.model,
   });
-  if (!hasGeminiCreds()) {
-    await logEvent({
-      runId: input.runId,
-      stage: input.stage,
-      level: 'info',
-      message: `Phase 2 (stub): extracted 2 items for ${input.category}`,
-      metrics: { url: input.url, source: input.source, category: input.category },
-    });
-    return [
-      { category: `${input.category} | Sub A`, description: 'Stubbed item 1' },
-      { category: `${input.category} | Sub B`, description: 'Stubbed item 2' },
-    ];
-  }
 
   const system = composePrompt(
     DEFAULT_EXTRACT_SYSTEM_PROMPT,
@@ -231,8 +213,10 @@ ${input.url}
 Extract only codes in the chunk and do not invent any codes or descriptions that are not explicitly mentioned:
 ${input.category}
 
-Extract all medical items from the document and return exclusively an output in JSON format, with no other text. 
+Extract all medical items from the document and return exclusively an output in JSON format, with no other text.
 `.trim();
+
+  const resolved = resolveModel(input.model, input.apiKeys);
 
   await logEvent({
     runId: input.runId,
@@ -243,25 +227,23 @@ Extract all medical items from the document and return exclusively an output in 
       url: input.url,
       source: input.source,
       category: input.category,
-      model: MODEL_ID,
+      model: resolved.modelId,
+      provider: resolved.provider,
+      reasoning: input.model.reasoning,
     },
   });
 
   const started = Date.now();
   try {
     const result = await generateText({
-      model: google(MODEL_ID),
+      model: resolved.sdkModel,
       system,
       prompt: userMessage,
-      tools: { url_context: google.tools.urlContext({}) },
+      tools: googleUrlContextTool(input.model.provider),
       output: Output.array({ element: ExtractCodesElementSchema }),
       stopWhen: stepCountIs(MAX_STEPS),
-      providerOptions: {
-        google: { thinkingConfig: { thinkingLevel: 'high' } },
-      },
+      providerOptions: resolved.providerOptions,
       temperature: 1,
-      topP: 0.95,
-      topK: 64,
     });
 
     const codes = result.output;
@@ -272,7 +254,7 @@ Extract all medical items from the document and return exclusively an output in 
       reasoningTokens: result.usage?.reasoningTokens,
       cachedInputTokens: result.usage?.cachedInputTokens,
     };
-    const costUsd = estimateCostUsd(MODEL_ID, usage);
+    const costUsd = estimateCostUsd(resolved.modelId, usage);
     await logEvent({
       runId: input.runId,
       stage: input.stage,
@@ -282,7 +264,7 @@ Extract all medical items from the document and return exclusively an output in 
         durationMs,
         ...usage,
         costUsd,
-        model: MODEL_ID,
+        model: resolved.modelId,
         url: input.url,
         source: input.source,
         category: input.category,
@@ -304,7 +286,7 @@ Extract all medical items from the document and return exclusively an output in 
         url: input.url,
         source: input.source,
         category: input.category,
-        model: MODEL_ID,
+        model: resolved.modelId,
       },
     });
     throw e;
@@ -313,9 +295,11 @@ Extract all medical items from the document and return exclusively an output in 
 
 // --- Milestones ------------------------------------------------------------
 //
-// Single-call extraction: Gemini reads every provided URL via `url_context`
-// and synthesizes a single plain-text milestones blob. Stubbed when no
-// `GOOGLE_GENERATIVE_AI_API_KEY` is set so the durability path still runs.
+// Single-call extraction: the chosen model reads every provided URL and
+// synthesizes a single plain-text milestones blob. Google models still get
+// the `url_context` tool; non-Google models receive the URL list inline in
+// the user message and must fetch via their own browsing capability (or
+// fail loudly — this is opt-in per provider).
 
 export async function extractMilestonesForInputs(input: {
   inputs: ContentInput[];
@@ -323,40 +307,20 @@ export async function extractMilestonesForInputs(input: {
   additionalInstructions?: string;
   runId: string;
   stage: StageName;
+  model: ModelSpec;
+  apiKeys: ProviderApiKeys;
 }): Promise<string> {
   'use step';
   console.log('[pipeline] extractMilestonesForInputs', {
     specialtySlug: input.specialtySlug,
     inputs: input.inputs.length,
-    stubbed: !hasGeminiCreds(),
+    model: input.model.model,
   });
-
-  if (!hasGeminiCreds()) {
-    const stub = [
-      'MK-1. Stubbed medical knowledge milestone.',
-      'PC-1. Stubbed patient care milestone.',
-      'SBP-1. Stubbed systems-based practice milestone.',
-    ].join('\n');
-    await logEvent({
-      runId: input.runId,
-      stage: input.stage,
-      level: 'info',
-      message: `Milestones (stub): produced ${stub.length} chars for ${input.inputs.length} input(s)`,
-      metrics: {
-        phase: 'milestones',
-        completion: stub,
-      },
-    });
-    return stub;
-  }
 
   const system = composePrompt(
     DEFAULT_MILESTONES_SYSTEM_PROMPT,
     input.additionalInstructions,
   );
-  // Match the n8n specialty_milestone_extractor user-message template so the
-  // combined {system, user} contract the model sees stays identical. Multiple
-  // URLs are supported by listing them under the same "URL(s)" line.
   const urlList = input.inputs.map((i) => `- ${i.url} (source: ${i.source})`).join('\n');
   const userMessage = `
 You are extracting milestones for the medical specialty: ${input.specialtySlug}.
@@ -367,27 +331,30 @@ ${urlList}
 Extract all patient care and medical knowledge milestones from the document and return them as a structured ordered list.
 `.trim();
 
+  const resolved = resolveModel(input.model, input.apiKeys);
+
   await logEvent({
     runId: input.runId,
     stage: input.stage,
     level: 'info',
     message: `Milestones: extracting across ${input.inputs.length} input(s)`,
-    metrics: { model: MODEL_ID, phase: 'milestones' },
+    metrics: {
+      model: resolved.modelId,
+      provider: resolved.provider,
+      reasoning: input.model.reasoning,
+      phase: 'milestones',
+    },
   });
 
   const started = Date.now();
   try {
     const result = await generateText({
-      model: google(MODEL_ID),
+      model: resolved.sdkModel,
       system,
       prompt: userMessage,
-      tools: { url_context: google.tools.urlContext({}) },
-      providerOptions: {
-        google: { thinkingConfig: { thinkingLevel: 'high' } },
-      },
+      tools: googleUrlContextTool(input.model.provider),
+      providerOptions: resolved.providerOptions,
       temperature: 1,
-      topP: 0.95,
-      topK: 64,
     });
 
     const milestones = result.text.trim();
@@ -401,7 +368,7 @@ Extract all patient care and medical knowledge milestones from the document and 
       reasoningTokens: result.usage?.reasoningTokens,
       cachedInputTokens: result.usage?.cachedInputTokens,
     };
-    const costUsd = estimateCostUsd(MODEL_ID, usage);
+    const costUsd = estimateCostUsd(resolved.modelId, usage);
     await logEvent({
       runId: input.runId,
       stage: input.stage,
@@ -411,7 +378,7 @@ Extract all patient care and medical knowledge milestones from the document and 
         durationMs,
         ...usage,
         costUsd,
-        model: MODEL_ID,
+        model: resolved.modelId,
         phase: 'milestones',
         completion: milestones,
       },
@@ -425,8 +392,20 @@ Extract all patient care and medical knowledge milestones from the document and 
       stage: input.stage,
       level: 'error',
       message: `Milestones failed: ${msg}`,
-      metrics: { durationMs, model: MODEL_ID, phase: 'milestones' },
+      metrics: { durationMs, model: resolved.modelId, phase: 'milestones' },
     });
     throw e;
   }
+}
+
+/**
+ * The Gemini `url_context` tool only exists on Google's provider. For
+ * Anthropic / OpenAI we omit it and trust the model to use whichever
+ * native browsing capability it has (or fail loudly when given a URL it
+ * can't fetch). Returning `undefined` lets the AI SDK skip the tools field
+ * entirely.
+ */
+function googleUrlContextTool(provider: string) {
+  if (provider !== 'google') return undefined;
+  return { url_context: google.tools.urlContext({}) };
 }

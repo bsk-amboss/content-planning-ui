@@ -22,9 +22,19 @@ import { requireUserResponse } from '@/lib/auth';
 import { fetchMutationAsUser, fetchQueryAsUser } from '@/lib/convex/server';
 import { listCodeSources } from '@/lib/data/code-sources';
 import { approvalToken } from '@/lib/workflows/lib/approval';
+import { resolveApiKeysForRun } from '@/lib/workflows/lib/resolve-keys';
 import { extractCodesWorkflow } from '@/lib/workflows/preprocessing/extract-codes';
 import { api } from '../../../../../convex/_generated/api';
 import { parseContentInputs } from '../_lib/inputs';
+
+// Hardcoded for now — slice 5 lifts the (provider, model, reasoning) choice
+// to the per-card UI and forwards it in the POST body. Until then, keep the
+// pre-refactor behavior: Gemini 3.1 Pro Preview at full thinking.
+const PREPROCESSING_MODEL = {
+  provider: 'google',
+  model: 'gemini-3.1-pro-preview',
+  reasoning: 'high',
+} as const;
 
 type Body = {
   specialtySlug?: string;
@@ -72,6 +82,8 @@ export async function POST(req: NextRequest) {
   });
   await fetchMutationAsUser(api.pipeline.initStage, { runId, stage: 'extract_codes' });
 
+  const apiKeys = await resolveApiKeysForRun(['google']);
+
   const wfRun = await start(extractCodesWorkflow, [
     {
       runId,
@@ -79,6 +91,8 @@ export async function POST(req: NextRequest) {
       inputs,
       identifyInstructions: identifyInstructions ?? undefined,
       extractInstructions: extractInstructions ?? undefined,
+      model: PREPROCESSING_MODEL,
+      apiKeys,
     },
   ]);
 

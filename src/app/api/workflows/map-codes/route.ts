@@ -24,8 +24,23 @@ import { requireUserResponse } from '@/lib/auth';
 import { fetchMutationAsUser, fetchQueryAsUser } from '@/lib/convex/server';
 import { approvalToken } from '@/lib/workflows/lib/approval';
 import type { MappingFilter } from '@/lib/workflows/lib/db-writes';
+import { resolveApiKeysForRun } from '@/lib/workflows/lib/resolve-keys';
 import { mapCodesWorkflow } from '@/lib/workflows/mapping/map-codes';
 import { api } from '../../../../../convex/_generated/api';
+
+// Hardcoded for slice 4 — slice 5 lifts to per-card user choice (primary +
+// backup). Pre-refactor behavior was 3× Gemini Flash → 1× Claude Opus 4.7,
+// so we mirror that here. `auto` reasoning maps to provider defaults.
+const PRIMARY_MODEL = {
+  provider: 'google',
+  model: 'gemini-3-flash',
+  reasoning: 'medium',
+} as const;
+const BACKUP_MODEL = {
+  provider: 'anthropic',
+  model: 'claude-opus-4-7',
+  reasoning: 'auto',
+} as const;
 
 type Body = {
   specialtySlug?: string;
@@ -114,6 +129,8 @@ export async function POST(req: NextRequest) {
   });
   await fetchMutationAsUser(api.pipeline.initStage, { runId, stage: 'map_codes' });
 
+  const apiKeys = await resolveApiKeysForRun(['google', 'anthropic']);
+
   const wfRun = await start(mapCodesWorkflow, [
     {
       runId,
@@ -123,6 +140,9 @@ export async function POST(req: NextRequest) {
       additionalInstructions: mappingInstructions ?? undefined,
       checkAgainstLibrary,
       filter,
+      primaryModel: PRIMARY_MODEL,
+      backupModel: BACKUP_MODEL,
+      apiKeys,
     },
   ]);
 

@@ -24,6 +24,7 @@ import {
 } from '../lib/db-writes';
 import { aggregateStageMetrics, logEvent } from '../lib/events';
 import { extractCodesForCategory, identifyModulesForUrl } from '../lib/gemini';
+import type { ModelSpec, ProviderApiKeys } from '../lib/llm';
 import { revalidateSpecialtyCache } from '../lib/revalidate';
 import type { ContentInput } from '../lib/sources';
 import { chunk } from '../lib/util';
@@ -37,6 +38,8 @@ export type ExtractCodesInput = {
   inputs: ContentInput[];
   identifyInstructions?: string;
   extractInstructions?: string;
+  model: ModelSpec;
+  apiKeys: ProviderApiKeys;
 };
 
 export async function extractCodesWorkflow(input: ExtractCodesInput) {
@@ -69,6 +72,8 @@ export async function extractCodesWorkflow(input: ExtractCodesInput) {
             specialtySlug: input.specialtySlug,
             runId: input.runId,
             stage: 'extract_codes',
+            model: input.model,
+            apiKeys: input.apiKeys,
           }),
         ),
       );
@@ -106,6 +111,8 @@ export async function extractCodesWorkflow(input: ExtractCodesInput) {
             additionalInstructions: input.extractInstructions,
             runId: input.runId,
             stage: 'extract_codes',
+            model: input.model,
+            apiKeys: input.apiKeys,
           }),
         ),
       );
