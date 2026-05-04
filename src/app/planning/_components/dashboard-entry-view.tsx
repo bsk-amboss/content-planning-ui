@@ -26,10 +26,7 @@ export function DashboardEntryView({ specialties }: { specialties: Specialty[] }
         </Text>
       </Stack>
       {specialties.length === 0 ? (
-        <Callout
-          type="info"
-          text="No specialties registered."
-        />
+        <Callout type="info" text="No specialties registered." />
       ) : (
         <SpecialtyEntry specialties={specialties} initialSlug={lastSlug} />
       )}

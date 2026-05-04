@@ -1,18 +1,16 @@
 'use client';
 
 import {
-  Avatar,
   Box,
+  DropdownMenu,
   Inline,
-  Link,
   Logo,
   NavBar,
   NavBarName,
-  Text,
 } from '@amboss/design-system';
 import { useAuthActions } from '@convex-dev/auth/react';
 import { useConvexAuth, useQuery } from 'convex/react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../convex/_generated/api';
 
@@ -44,33 +42,32 @@ function UserMenu() {
   const { isAuthenticated } = useConvexAuth();
   const user = useQuery(api.users.getCurrentUser, isAuthenticated ? {} : 'skip');
   const { signOut } = useAuthActions();
+  const router = useRouter();
 
   if (!isAuthenticated || !user?.email) return null;
 
   const localPart = user.email.split('@')[0] ?? user.email;
 
   return (
-    <Inline space="s" vAlignItems="center" noWrap>
-      <Avatar label={localPart} color="brand" />
-      <Text size="xs" weight="bold">
-        {localPart}
-      </Text>
-      <Text color="secondary">·</Text>
-      <Link
-        as="button"
-        type="button"
-        color="tertiary"
-        onClick={async () => {
-          await signOut();
-          // Hard navigation — same reason as the post-sign-in case in
-          // src/app/login/page.tsx: guarantees the proxy reads the cleared
-          // cookie on the next request and avoids any stale-state flicker.
-          window.location.assign('/login');
-        }}
-      >
-        Sign out
-      </Link>
-    </Inline>
+    <DropdownMenu
+      label={localPart}
+      iconName="user"
+      triggerAriaLabel={`Open user menu for ${localPart}`}
+      menuItems={[
+        { label: 'Settings', onSelect: () => router.push('/settings') },
+        'separator',
+        {
+          label: 'Sign out',
+          onSelect: async () => {
+            await signOut();
+            // Hard navigation — same reason as the post-sign-in case in
+            // src/app/login/page.tsx: guarantees the proxy reads the cleared
+            // cookie on the next request and avoids any stale-state flicker.
+            window.location.assign('/login');
+          },
+        },
+      ]}
+    />
   );
 }
 
