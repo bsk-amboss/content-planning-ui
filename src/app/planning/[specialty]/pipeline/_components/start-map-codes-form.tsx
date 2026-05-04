@@ -17,6 +17,12 @@ import type { AmbossLibraryStats } from '@/lib/data/amboss-library';
 import type { CodeCategorySummary, UnmappedCodePickerRow } from '@/lib/data/codes';
 import { DEFAULT_MAPPING_SYSTEM_PROMPT } from '@/lib/workflows/lib/prompts';
 import { DefaultPromptModal } from './default-prompt-modal';
+import {
+  backupModelKey,
+  DEFAULT_BACKUP_MODEL,
+  modelKey,
+  readSpec,
+} from './model-selection-storage';
 import { PromptSection } from './prompt-section';
 
 // Sentinels that appear at the top of the category dropdown. We intercept
@@ -137,6 +143,14 @@ export function StartMapCodesForm({
     e.preventDefault();
     setError(null);
     setSuccess(null);
+
+    const primaryModel = readSpec(modelKey(specialtySlug, 'map_codes'));
+    if (!primaryModel) {
+      setError('Pick a primary model on the Map codes card before starting.');
+      return;
+    }
+    const backupModel = readSpec(backupModelKey(specialtySlug)) ?? DEFAULT_BACKUP_MODEL;
+
     setSubmitting(true);
     try {
       // Only one of the two filters is sent per run — the mode toggle above
@@ -158,6 +172,8 @@ export function StartMapCodesForm({
           checkAgainstLibrary,
           categories: categoriesPayload,
           codes: codesPayload,
+          primaryModel,
+          backupModel,
         }),
       });
       const body = await res.json().catch(() => ({}));

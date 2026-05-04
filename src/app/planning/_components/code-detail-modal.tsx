@@ -5,6 +5,12 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { CodeRunMetadata } from '@/lib/data/code-run-metadata';
 import type { Code } from '@/lib/types';
+import {
+  backupModelKey,
+  DEFAULT_BACKUP_MODEL,
+  modelKey,
+  readSpec,
+} from '../[specialty]/pipeline/_components/model-selection-storage';
 import { CoverageBadge, DepthBadge } from './suggestion-badge';
 
 // The on-disk shape of these JSON columns is richer than the Zod type
@@ -189,13 +195,31 @@ export function CodeDetailModal({
       );
       if (!ok) return;
     }
+    const primaryModel = readSpec(modelKey(specialtySlug, 'map_codes'));
+    if (!primaryModel) {
+      setError('Pick a primary model on the Map codes pipeline card before remapping.');
+      return;
+    }
+    const backupModel = readSpec(backupModelKey(specialtySlug)) ?? DEFAULT_BACKUP_MODEL;
     setSubmitting(true);
     setError(null);
     try {
       const url = isUnmapped ? '/api/workflows/map-codes' : '/api/workflows/remap-code';
       const body = isUnmapped
-        ? { specialtySlug, codes: [row.code], checkAgainstLibrary: true }
-        : { specialtySlug, code: row.code, checkAgainstLibrary: true };
+        ? {
+            specialtySlug,
+            codes: [row.code],
+            checkAgainstLibrary: true,
+            primaryModel,
+            backupModel,
+          }
+        : {
+            specialtySlug,
+            code: row.code,
+            checkAgainstLibrary: true,
+            primaryModel,
+            backupModel,
+          };
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

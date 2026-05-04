@@ -24,23 +24,10 @@ import { requireUserResponse } from '@/lib/auth';
 import { fetchMutationAsUser, fetchQueryAsUser } from '@/lib/convex/server';
 import { approvalToken } from '@/lib/workflows/lib/approval';
 import type { MappingFilter } from '@/lib/workflows/lib/db-writes';
+import { parseModelSpec } from '@/lib/workflows/lib/parse-model';
 import { resolveApiKeysForRun } from '@/lib/workflows/lib/resolve-keys';
 import { mapCodesWorkflow } from '@/lib/workflows/mapping/map-codes';
 import { api } from '../../../../../convex/_generated/api';
-
-// Hardcoded for slice 4 — slice 5 lifts to per-card user choice (primary +
-// backup). Pre-refactor behavior was 3× Gemini Flash → 1× Claude Opus 4.7,
-// so we mirror that here. `auto` reasoning maps to provider defaults.
-const PRIMARY_MODEL = {
-  provider: 'google',
-  model: 'gemini-3-flash',
-  reasoning: 'medium',
-} as const;
-const BACKUP_MODEL = {
-  provider: 'anthropic',
-  model: 'claude-opus-4-7',
-  reasoning: 'auto',
-} as const;
 
 type Body = {
   specialtySlug?: string;
@@ -50,6 +37,8 @@ type Body = {
   checkAgainstLibrary?: boolean;
   categories?: unknown;
   codes?: unknown;
+  primaryModel?: unknown;
+  backupModel?: unknown;
 };
 
 function stringArray(raw: unknown): string[] | undefined {
@@ -88,6 +77,22 @@ export async function POST(req: NextRequest) {
   if (!slug) {
     return NextResponse.json({ error: 'specialtySlug required' }, { status: 400 });
   }
+  const primaryParse = parseModelSpec(body.primaryModel);
+  if (!primaryParse.ok) {
+    return NextResponse.json(
+      { error: `primaryModel: ${primaryParse.error}` },
+      { status: 400 },
+    );
+  }
+  const backupParse = parseModelSpec(body.backupModel);
+  if (!backupParse.ok) {
+    return NextResponse.json(
+      { error: `backupModel: ${backupParse.error}` },
+      { status: 400 },
+    );
+  }
+  const primaryModel = primaryParse.spec;
+  const backupModel = backupParse.spec;
 
   const spec = await fetchQueryAsUser(api.specialties.get, { slug });
   if (!spec) {
@@ -129,7 +134,9 @@ export async function POST(req: NextRequest) {
   });
   await fetchMutationAsUser(api.pipeline.initStage, { runId, stage: 'map_codes' });
 
-  const apiKeys = await resolveApiKeysForRun(['google', 'anthropic']);
+  const apiKeys = await resolveApiKeysForRun([
+    ...new Set([primaryModel.provider, backupModel.provider]),
+  ]);
 
   const wfRun = await start(mapCodesWorkflow, [
     {
@@ -140,8 +147,8 @@ export async function POST(req: NextRequest) {
       additionalInstructions: mappingInstructions ?? undefined,
       checkAgainstLibrary,
       filter,
-      primaryModel: PRIMARY_MODEL,
-      backupModel: BACKUP_MODEL,
+      primaryModel,
+      backupModel,
       apiKeys,
     },
   ]);

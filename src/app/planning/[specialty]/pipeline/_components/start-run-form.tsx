@@ -11,6 +11,7 @@ import type { CodeSource } from '@/lib/workflows/lib/sources';
 import { AddSourceModal } from './add-source-modal';
 import { DefaultPromptModal } from './default-prompt-modal';
 import { InputRow, type InputRowState, newInputRow } from './input-row';
+import { modelKey, readSpec } from './model-selection-storage';
 import { PromptSection } from './prompt-section';
 
 type Row = InputRowState;
@@ -75,6 +76,12 @@ export function StartRunForm({
       }
     }
 
+    const model = readSpec(modelKey(specialtySlug, 'extract_codes'));
+    if (!model) {
+      setError('Pick a model on the Extract codes card before starting.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const res = await fetch('/api/workflows/extract', {
@@ -85,6 +92,7 @@ export function StartRunForm({
           inputs,
           identifyModulesInstructions: identifyInstructions.trim() || undefined,
           extractCodesInstructions: extractInstructions.trim() || undefined,
+          model,
         }),
       });
       const body = await res.json().catch(() => ({}));

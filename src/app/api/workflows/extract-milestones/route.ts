@@ -16,22 +16,17 @@ import { requireUserResponse } from '@/lib/auth';
 import { fetchMutationAsUser, fetchQueryAsUser } from '@/lib/convex/server';
 import { listMilestoneSources } from '@/lib/data/milestone-sources';
 import { approvalToken } from '@/lib/workflows/lib/approval';
+import { parseModelSpec } from '@/lib/workflows/lib/parse-model';
 import { resolveApiKeysForRun } from '@/lib/workflows/lib/resolve-keys';
 import { extractMilestonesWorkflow } from '@/lib/workflows/preprocessing/extract-milestones';
 import { api } from '../../../../../convex/_generated/api';
 import { parseContentInputs } from '../_lib/inputs';
 
-// Hardcoded for slice 4; slice 5 lifts to per-card user choice.
-const MILESTONES_MODEL = {
-  provider: 'google',
-  model: 'gemini-3.1-pro-preview',
-  reasoning: 'high',
-} as const;
-
 type Body = {
   specialtySlug?: string;
   inputs?: unknown;
   milestonesInstructions?: string;
+  model?: unknown;
 };
 
 export async function POST(req: NextRequest) {
@@ -42,6 +37,11 @@ export async function POST(req: NextRequest) {
   if (!slug) {
     return NextResponse.json({ error: 'specialtySlug required' }, { status: 400 });
   }
+  const modelParse = parseModelSpec(body.model);
+  if (!modelParse.ok) {
+    return NextResponse.json({ error: modelParse.error }, { status: 400 });
+  }
+  const model = modelParse.spec;
   const sourceRows = await listMilestoneSources();
   const allowedSlugs = sourceRows.map((r) => r.slug);
   const parsed = parseContentInputs(body.inputs, allowedSlugs);
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     stage: 'extract_milestones',
   });
 
-  const apiKeys = await resolveApiKeysForRun(['google']);
+  const apiKeys = await resolveApiKeysForRun([model.provider]);
 
   const wfRun = await start(extractMilestonesWorkflow, [
     {
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
       specialtySlug: slug,
       inputs,
       milestonesInstructions: milestonesInstructions ?? undefined,
-      model: MILESTONES_MODEL,
+      model,
       apiKeys,
     },
   ]);

@@ -8,6 +8,7 @@ import type { CodeSource } from '@/lib/workflows/lib/sources';
 import { AddSourceModal } from './add-source-modal';
 import { DefaultPromptModal } from './default-prompt-modal';
 import { InputRow, type InputRowState, newInputRow } from './input-row';
+import { modelKey, readSpec } from './model-selection-storage';
 import { PromptSection } from './prompt-section';
 
 export function StartMilestonesForm({
@@ -64,6 +65,12 @@ export function StartMilestonesForm({
       }
     }
 
+    const model = readSpec(modelKey(specialtySlug, 'extract_milestones'));
+    if (!model) {
+      setError('Pick a model on the Extract milestones card before starting.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const res = await fetch('/api/workflows/extract-milestones', {
@@ -73,6 +80,7 @@ export function StartMilestonesForm({
           specialtySlug,
           inputs,
           milestonesInstructions: instructions.trim() || undefined,
+          model,
         }),
       });
       const body = await res.json().catch(() => ({}));
