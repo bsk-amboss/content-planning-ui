@@ -8,16 +8,20 @@
  *   <provider>TestedAt    — ms-epoch of the last connection test
  *   <provider>TestStatus  — 'ok' | 'failed' from the last test
  *
- * The `getStatusForCurrentUser` query returns *only* presence flags + the
- * tested-at / status pairs, never the raw key, so the browser never sees the
- * stored secret. The raw key is only exposed via `getOwnKeyForCurrentUser`,
- * which still requires the caller's own auth token — used by Next.js API
- * route handlers via `fetchQueryAsUser` to load the key just before kicking
- * off a workflow.
+ * Two read paths:
+ * - `getStatusForCurrentUser` returns presence flags + test telemetry only.
+ *   It's a normal user-auth query — anything callable with the user's JWT
+ *   can hit it. The raw key string is never returned here.
+ * - `getKeyForUserService` returns the raw key string but only for callers
+ *   that present `WORKFLOW_SECRET`. The browser cannot obtain the secret,
+ *   so even an XSS payload running with the user's JWT cannot pull keys
+ *   out of this query. The Next.js API route handlers (server-side, with
+ *   `env.WORKFLOW_SECRET` in scope) are the only legitimate callers.
  */
 
 import { ConvexError, v } from 'convex/values';
 import { mutation, query } from './_generated/server';
+import { requireService, serviceSecretArg } from './_lib/access';
 import { auth } from './auth';
 
 const providerArg = v.union(
@@ -92,17 +96,28 @@ export const getStatusForCurrentUser = query({
 });
 
 /**
- * Server-side raw-key fetch. Returns the key string for ONE provider for the
- * authenticated caller. Called by Next.js API routes via `fetchQueryAsUser`
- * just before kicking off a workflow. Returns `null` when the user has not
- * configured a key for that provider — the caller is responsible for the
- * env-fallback logic.
+ * Server-only raw-key fetch.
+ *
+ * Even though Convex `query` is technically callable from any authenticated
+ * client, this function refuses every request that doesn't include the
+ * shared `WORKFLOW_SECRET` — only the Next.js API route handlers (running
+ * server-side, with the env var in scope) can invoke it. The browser cannot
+ * obtain the secret, so an XSS payload using the user's JWT can't pull keys
+ * out of this query.
+ *
+ * Callers must resolve `userId` separately (e.g. via
+ * `fetchQueryAsUser(api.users.getCurrentUser)`) and pass it in alongside
+ * the secret. Returns `null` when the user hasn't configured a key for
+ * the requested provider.
  */
-export const getOwnKeyForCurrentUser = query({
-  args: { provider: providerArg },
-  handler: async (ctx, { provider }) => {
-    const userId = await auth.getUserId(ctx);
-    if (!userId) throw new ConvexError('Unauthorized');
+export const getKeyForUserService = query({
+  args: {
+    userId: v.id('users'),
+    provider: providerArg,
+    _secret: serviceSecretArg,
+  },
+  handler: async (ctx, { userId, provider, _secret }) => {
+    await requireService(_secret);
     const row = (await ctx.db
       .query('userApiKeys')
       .withIndex('by_userId', (q) => q.eq('userId', userId))

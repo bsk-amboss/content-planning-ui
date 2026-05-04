@@ -14,7 +14,9 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateText } from 'ai';
+import { fetchQuery } from 'convex/nextjs';
 import { type NextRequest, NextResponse } from 'next/server';
+import { env } from '@/env';
 import { requireUserResponse } from '@/lib/auth';
 import { fetchMutationAsUser, fetchQueryAsUser } from '@/lib/convex/server';
 import { api } from '../../../../../convex/_generated/api';
@@ -43,8 +45,24 @@ export async function POST(req: NextRequest) {
   }
   const provider = body.provider;
 
-  const apiKey = await fetchQueryAsUser(api.apiKeys.getOwnKeyForCurrentUser, {
+  // Identify the caller, then read the key via the service-secret-protected
+  // path. Splitting these means the raw-key query refuses any client that
+  // doesn't present `WORKFLOW_SECRET` (i.e. anything other than this server-
+  // side route).
+  const user = await fetchQueryAsUser(api.users.getCurrentUser, {});
+  if (!user?._id) {
+    return NextResponse.json({ ok: false, message: 'unauthorized' }, { status: 401 });
+  }
+  if (!env.WORKFLOW_SECRET) {
+    return NextResponse.json(
+      { ok: false, message: 'Server is missing WORKFLOW_SECRET — cannot test keys.' },
+      { status: 500 },
+    );
+  }
+  const apiKey = await fetchQuery(api.apiKeys.getKeyForUserService, {
+    userId: user._id,
     provider,
+    _secret: env.WORKFLOW_SECRET,
   });
   if (!apiKey) {
     return NextResponse.json(
