@@ -24,6 +24,7 @@ import { pipelineTables } from './schema/pipeline';
 import { sectionsTables } from './schema/sections';
 import { sourcesTables } from './schema/sources';
 import { specialtiesTables } from './schema/specialties';
+import { userApiKeysTables } from './schema/userApiKeys';
 
 export default defineSchema({
   ...authTables,
@@ -36,4 +37,5 @@ export default defineSchema({
   ...sourcesTables,
   ...pipelineTables,
   ...otpTables,
+  ...userApiKeysTables,
 });
