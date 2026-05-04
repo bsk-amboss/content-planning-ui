@@ -14,12 +14,7 @@ export function SpecialtiesGridView({
   phases: Record<string, Phase>;
 }) {
   if (specialties.length === 0) {
-    return (
-      <Callout
-        type="info"
-        text="No specialties registered yet. Add one below."
-      />
-    );
+    return <Callout type="info" text="No specialties registered yet. Add one below." />;
   }
   return (
     <Columns gap="m" vAlignItems="stretch">

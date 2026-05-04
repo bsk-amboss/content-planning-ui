@@ -27,6 +27,7 @@ import {
 } from '@/lib/workflows/lib/sources';
 import { ApproveButton } from './approve-button';
 import { CancelButton } from './cancel-button';
+import { MappingModelSelector, ModelSelector } from './model-selector';
 import { ResetButton } from './reset-button';
 
 /**
@@ -670,6 +671,11 @@ export function StageCard({
           <CardBox>
             <Stack space="s">
               {description ? <Text color="secondary">{description}</Text> : null}
+              {stageName === 'map_codes' ? (
+                <MappingModelSelector specialtySlug={specialtySlug} />
+              ) : (
+                <ModelSelector specialtySlug={specialtySlug} stage={stageName} />
+              )}
               {summary ? <Text>{summary}</Text> : null}
               {metrics ? <Text color="secondary">{metrics}</Text> : null}
               {status === 'failed' && stage?.errorMessage ? (

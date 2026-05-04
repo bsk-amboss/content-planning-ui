@@ -16,6 +16,8 @@ import { requireUserResponse } from '@/lib/auth';
 import { fetchMutationAsUser, fetchQueryAsUser } from '@/lib/convex/server';
 import { listMilestoneSources } from '@/lib/data/milestone-sources';
 import { approvalToken } from '@/lib/workflows/lib/approval';
+import { parseModelSpec } from '@/lib/workflows/lib/parse-model';
+import { resolveApiKeysForRun } from '@/lib/workflows/lib/resolve-keys';
 import { extractMilestonesWorkflow } from '@/lib/workflows/preprocessing/extract-milestones';
 import { api } from '../../../../../convex/_generated/api';
 import { parseContentInputs } from '../_lib/inputs';
@@ -24,6 +26,7 @@ type Body = {
   specialtySlug?: string;
   inputs?: unknown;
   milestonesInstructions?: string;
+  model?: unknown;
 };
 
 export async function POST(req: NextRequest) {
@@ -34,6 +37,11 @@ export async function POST(req: NextRequest) {
   if (!slug) {
     return NextResponse.json({ error: 'specialtySlug required' }, { status: 400 });
   }
+  const modelParse = parseModelSpec(body.model);
+  if (!modelParse.ok) {
+    return NextResponse.json({ error: modelParse.error }, { status: 400 });
+  }
+  const model = modelParse.spec;
   const sourceRows = await listMilestoneSources();
   const allowedSlugs = sourceRows.map((r) => r.slug);
   const parsed = parseContentInputs(body.inputs, allowedSlugs);
@@ -45,6 +53,20 @@ export async function POST(req: NextRequest) {
   const spec = await fetchQueryAsUser(api.specialties.get, { slug });
   if (!spec) {
     return NextResponse.json({ error: `specialty not found: ${slug}` }, { status: 404 });
+  }
+
+  // Resolve keys BEFORE creating the run so a missing-key 409 doesn't leave a
+  // zombie pipelineRuns row.
+  const apiKeys = await resolveApiKeysForRun([model.provider]);
+  if (!apiKeys[model.provider]) {
+    return NextResponse.json(
+      {
+        error: `No API key configured for ${model.provider}.`,
+        code: 'MISSING_API_KEY',
+        provider: model.provider,
+      },
+      { status: 409 },
+    );
   }
 
   const milestonesInstructions = body.milestonesInstructions?.trim() || null;
@@ -70,6 +92,8 @@ export async function POST(req: NextRequest) {
       specialtySlug: slug,
       inputs,
       milestonesInstructions: milestonesInstructions ?? undefined,
+      model,
+      apiKeys,
     },
   ]);
 

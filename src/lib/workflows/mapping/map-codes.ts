@@ -23,6 +23,7 @@ import {
   writeCodeMapping,
 } from '../lib/db-writes';
 import { aggregateStageMetrics, logEvent } from '../lib/events';
+import type { ModelSpec, ProviderApiKeys } from '../lib/llm';
 import { revalidateSpecialtyCache } from '../lib/revalidate';
 import { chunk } from '../lib/util';
 
@@ -38,6 +39,9 @@ export type MapCodesInput = {
   /** Optional category/code filter applied to `listUnmappedCodes`. Null or
    *  empty → map every unmapped code for the specialty. */
   filter?: MappingFilter | null;
+  primaryModel: ModelSpec;
+  backupModel: ModelSpec;
+  apiKeys: ProviderApiKeys;
 };
 
 /**
@@ -72,6 +76,9 @@ async function mapAndWriteOne(input: {
   milestones: string;
   additionalInstructions?: string;
   checkAgainstLibrary: boolean;
+  primaryModel: ModelSpec;
+  backupModel: ModelSpec;
+  apiKeys: ProviderApiKeys;
 }): Promise<{ code: string; attempts: number; model: string; unresolved: boolean }> {
   'use step';
   const result = await mapAndValidateCode({
@@ -86,6 +93,9 @@ async function mapAndWriteOne(input: {
     checkAgainstLibrary: input.checkAgainstLibrary,
     runId: input.runId,
     stage: 'map_codes',
+    primaryModel: input.primaryModel,
+    backupModel: input.backupModel,
+    apiKeys: input.apiKeys,
   });
   await writeCodeMapping(input.specialtySlug, input.code, result.mapping);
   return {
@@ -157,6 +167,9 @@ export async function mapCodesWorkflow(input: MapCodesInput) {
               milestones,
               additionalInstructions: input.additionalInstructions,
               checkAgainstLibrary: input.checkAgainstLibrary,
+              primaryModel: input.primaryModel,
+              backupModel: input.backupModel,
+              apiKeys: input.apiKeys,
             }),
           ),
         );

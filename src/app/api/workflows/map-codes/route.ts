@@ -24,6 +24,8 @@ import { requireUserResponse } from '@/lib/auth';
 import { fetchMutationAsUser, fetchQueryAsUser } from '@/lib/convex/server';
 import { approvalToken } from '@/lib/workflows/lib/approval';
 import type { MappingFilter } from '@/lib/workflows/lib/db-writes';
+import { parseModelSpec } from '@/lib/workflows/lib/parse-model';
+import { resolveApiKeysForRun } from '@/lib/workflows/lib/resolve-keys';
 import { mapCodesWorkflow } from '@/lib/workflows/mapping/map-codes';
 import { api } from '../../../../../convex/_generated/api';
 
@@ -35,6 +37,8 @@ type Body = {
   checkAgainstLibrary?: boolean;
   categories?: unknown;
   codes?: unknown;
+  primaryModel?: unknown;
+  backupModel?: unknown;
 };
 
 function stringArray(raw: unknown): string[] | undefined {
@@ -73,6 +77,22 @@ export async function POST(req: NextRequest) {
   if (!slug) {
     return NextResponse.json({ error: 'specialtySlug required' }, { status: 400 });
   }
+  const primaryParse = parseModelSpec(body.primaryModel);
+  if (!primaryParse.ok) {
+    return NextResponse.json(
+      { error: `primaryModel: ${primaryParse.error}` },
+      { status: 400 },
+    );
+  }
+  const backupParse = parseModelSpec(body.backupModel);
+  if (!backupParse.ok) {
+    return NextResponse.json(
+      { error: `backupModel: ${backupParse.error}` },
+      { status: 400 },
+    );
+  }
+  const primaryModel = primaryParse.spec;
+  const backupModel = backupParse.spec;
 
   const spec = await fetchQueryAsUser(api.specialties.get, { slug });
   if (!spec) {
@@ -93,6 +113,22 @@ export async function POST(req: NextRequest) {
         error: filter
           ? 'No unmapped codes match the selected categories or codes.'
           : 'No unmapped codes for this specialty. Reset the mapping stage to remap everything, or run extract codes first.',
+      },
+      { status: 409 },
+    );
+  }
+
+  // Resolve keys BEFORE creating the run so a missing-key 409 doesn't leave a
+  // zombie pipelineRuns row.
+  const neededProviders = [...new Set([primaryModel.provider, backupModel.provider])];
+  const apiKeys = await resolveApiKeysForRun(neededProviders);
+  const missingProvider = neededProviders.find((p) => !apiKeys[p]);
+  if (missingProvider) {
+    return NextResponse.json(
+      {
+        error: `No API key configured for ${missingProvider}.`,
+        code: 'MISSING_API_KEY',
+        provider: missingProvider,
       },
       { status: 409 },
     );
@@ -123,6 +159,9 @@ export async function POST(req: NextRequest) {
       additionalInstructions: mappingInstructions ?? undefined,
       checkAgainstLibrary,
       filter,
+      primaryModel,
+      backupModel,
+      apiKeys,
     },
   ]);
 

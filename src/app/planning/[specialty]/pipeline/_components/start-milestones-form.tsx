@@ -3,11 +3,14 @@
 import { Button, Callout, Inline, Stack, Text } from '@amboss/design-system';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import type { ProviderId } from '@/lib/workflows/lib/llm';
 import { DEFAULT_MILESTONES_SYSTEM_PROMPT } from '@/lib/workflows/lib/prompts';
 import type { CodeSource } from '@/lib/workflows/lib/sources';
 import { AddSourceModal } from './add-source-modal';
 import { DefaultPromptModal } from './default-prompt-modal';
 import { InputRow, type InputRowState, newInputRow } from './input-row';
+import { MissingKeyModal } from './missing-key-modal';
+import { modelKey, readSpec } from './model-selection-storage';
 import { PromptSection } from './prompt-section';
 
 export function StartMilestonesForm({
@@ -26,6 +29,7 @@ export function StartMilestonesForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ runId: string; token: string } | null>(null);
+  const [missingKey, setMissingKey] = useState<ProviderId | null>(null);
 
   const updateRow = (id: string, patch: Partial<InputRowState>) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -64,6 +68,12 @@ export function StartMilestonesForm({
       }
     }
 
+    const model = readSpec(modelKey(specialtySlug, 'extract_milestones'));
+    if (!model) {
+      setError('Pick a model on the Extract milestones card before starting.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const res = await fetch('/api/workflows/extract-milestones', {
@@ -73,10 +83,21 @@ export function StartMilestonesForm({
           specialtySlug,
           inputs,
           milestonesInstructions: instructions.trim() || undefined,
+          model,
         }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (
+          res.status === 409 &&
+          body?.code === 'MISSING_API_KEY' &&
+          (body.provider === 'google' ||
+            body.provider === 'anthropic' ||
+            body.provider === 'openai')
+        ) {
+          setMissingKey(body.provider);
+          return;
+        }
         setError(body?.error ?? `HTTP ${res.status}`);
         return;
       }
@@ -161,6 +182,11 @@ export function StartMilestonesForm({
           setAddSourceForRowId(null);
           router.refresh();
         }}
+      />
+      <MissingKeyModal
+        open={missingKey !== null}
+        provider={missingKey}
+        onClose={() => setMissingKey(null)}
       />
     </form>
   );

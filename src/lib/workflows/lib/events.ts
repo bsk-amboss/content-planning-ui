@@ -27,6 +27,12 @@ export type EventMetrics = {
   cachedInputTokens?: number;
   costUsd?: number | null;
   model?: string;
+  /** Which provider produced the call. Used by the UI to badge attempts and
+   *  by aggregateStageMetrics to tell escalations apart from primary calls. */
+  provider?: 'google' | 'anthropic' | 'openai';
+  /** Reasoning level passed to the model — surfaces what the user picked at
+   *  kickoff so the per-call browser can show e.g. "Gemini 3 Flash · low". */
+  reasoning?: 'auto' | 'low' | 'medium' | 'high';
   url?: string;
   source?: string;
   category?: string;

@@ -5,19 +5,18 @@
  * crash retries the whole loop for just that code (each code is independent
  * and steps cache on return):
  *
- *   1. `gemini-3-flash-preview`   (fallback `gemini-2.5-flash` on provider-not-found)
- *   2. flash, same, + CORRECTION listing invalid IDs from attempt 1
- *   3. flash, same, + cumulative CORRECTION
- *   4. `claude-opus-4-7`          (only when attempts 1-3 still have invalid IDs)
+ *   1. primary model       (no correction yet)
+ *   2. primary model       + CORRECTION listing invalid IDs from attempt 1
+ *   3. primary model       + cumulative CORRECTION
+ *   4. backup model        (only when attempts 1-3 still produced invalid IDs)
  *
+ * The user picks both `primary` and `backup` per-stage on the StageCard.
  * Validation: every cited `articleId` / `sectionId` in the LLM output is
  * checked against the local `amboss_articles` / `amboss_sections` catalog.
  * When `checkAgainstLibrary` is false, the ladder short-circuits after the
  * first well-formed parse — matching the user's "raw output" toggle behavior.
  */
 
-import { anthropic } from '@ai-sdk/anthropic';
-import { google } from '@ai-sdk/google';
 import { createMCPClient } from '@ai-sdk/mcp';
 import { generateText } from 'ai';
 import { z } from 'zod';
@@ -29,27 +28,12 @@ import {
 } from '@/lib/data/amboss-library';
 import type { StageName } from './db-writes';
 import { logEvent } from './events';
+import { type ModelSpec, type ProviderApiKeys, resolveModel } from './llm';
 import { estimateCostUsd } from './pricing';
 import {
   DEFAULT_MAPPING_SYSTEM_PROMPT,
   DEFAULT_MAPPING_USER_MESSAGE_TEMPLATE,
 } from './prompts';
-
-// ---------------------------------------------------------------------------
-// Model identifiers. The first flash ID is the n8n default; if the provider
-// rejects it (not yet exposed via @ai-sdk/google), the workflow falls back to
-// the GA flash once per run (tracked in a module-scope flag) and logs the
-// fallback as a warn-level event.
-// ---------------------------------------------------------------------------
-
-const FLASH_PREVIEW_MODEL = 'gemini-3-flash-preview';
-const FLASH_FALLBACK_MODEL = 'gemini-2.5-flash';
-const OPUS_MODEL = 'claude-opus-4-7';
-
-let flashFallbackTriggered = false;
-function currentFlashModel(): string {
-  return flashFallbackTriggered ? FLASH_FALLBACK_MODEL : FLASH_PREVIEW_MODEL;
-}
 
 // ---------------------------------------------------------------------------
 // Output schema (mirrors the n8n agent output).
@@ -247,7 +231,8 @@ function correctionMessage(invalidIds: string[]): string {
 // ---------------------------------------------------------------------------
 
 async function runAgentAttempt(params: {
-  modelId: string;
+  spec: ModelSpec;
+  apiKeys: ProviderApiKeys;
   system: string;
   userMessage: string;
   tools: Record<string, unknown>;
@@ -255,29 +240,26 @@ async function runAgentAttempt(params: {
   text: string;
   usage: ReturnType<typeof pickUsage>;
   mcp: { calls: number; toolNames: string[] };
+  modelId: string;
 }> {
-  const { modelId, system, userMessage, tools } = params;
-  const isClaude = modelId.startsWith('claude-');
-  const model = isClaude ? anthropic(modelId) : google(modelId);
+  const { spec, apiKeys, system, userMessage, tools } = params;
+  const resolved = resolveModel(spec, apiKeys);
   const result = await generateText({
-    model,
+    model: resolved.sdkModel,
     system,
     prompt: userMessage,
     // biome-ignore lint/suspicious/noExplicitAny: MCP toolset discovered at runtime; the AI SDK accepts the full set
     tools: tools as any,
     stopWhen: ({ steps }: { steps: Array<unknown> }) => steps.length >= 20,
     temperature: 1,
-    ...(isClaude
-      ? {}
-      : {
-          topP: 0.95,
-          topK: 64,
-          providerOptions: {
-            google: { thinkingConfig: { thinkingLevel: 'medium' as const } },
-          },
-        }),
+    providerOptions: resolved.providerOptions,
   });
-  return { text: result.text, usage: pickUsage(result.usage), mcp: pickMcp(result) };
+  return {
+    text: result.text,
+    usage: pickUsage(result.usage),
+    mcp: pickMcp(result),
+    modelId: resolved.modelId,
+  };
 }
 
 /**
@@ -341,12 +323,17 @@ export async function mapAndValidateCode(input: {
   checkAgainstLibrary: boolean;
   runId: string;
   stage: StageName;
+  primaryModel: ModelSpec;
+  backupModel: ModelSpec;
+  apiKeys: ProviderApiKeys;
 }): Promise<MappingResult> {
   'use step';
 
   console.log('[pipeline] mapAndValidateCode', {
     code: input.code,
     checkAgainstLibrary: input.checkAgainstLibrary,
+    primary: input.primaryModel.model,
+    backup: input.backupModel.model,
     stubbed: !hasMappingCreds(),
   });
 
@@ -431,35 +418,27 @@ export async function mapAndValidateCode(input: {
     language: input.language,
   });
 
-  const ladder: Array<{ modelId: string; label: string }> = [
-    { modelId: currentFlashModel(), label: 'flash-1' },
-    { modelId: currentFlashModel(), label: 'flash-2' },
-    { modelId: currentFlashModel(), label: 'flash-3' },
-    { modelId: OPUS_MODEL, label: 'opus' },
+  // Three primary attempts (with cumulative correction messages on retries 2
+  // and 3) followed by a single backup attempt — only reached if the primary
+  // still produced invalid IDs after correction.
+  const ladder: Array<{ spec: ModelSpec; label: string }> = [
+    { spec: input.primaryModel, label: 'primary-1' },
+    { spec: input.primaryModel, label: 'primary-2' },
+    { spec: input.primaryModel, label: 'primary-3' },
+    { spec: input.backupModel, label: 'backup' },
   ];
 
   let cumulativeInvalid: string[] = [];
   let lastMapping: MappingOutput | null = null;
-  let lastModel = ladder[0].modelId;
+  let lastModel = input.primaryModel.model;
   let attempts = 0;
-  let unresolved = false;
 
   const started = Date.now();
   try {
     for (const step of ladder) {
       attempts += 1;
-      // Re-evaluate every iteration in case attempt 1 tripped the fallback flag.
-      const modelId = step.modelId.startsWith('claude-')
-        ? OPUS_MODEL
-        : currentFlashModel();
+      const modelId = step.spec.model;
       lastModel = modelId;
-
-      // Skip the opus step if we don't have the Anthropic key; write through
-      // the last flash output instead (unresolved).
-      if (modelId === OPUS_MODEL && !env.ANTHROPIC_API_KEY) {
-        unresolved = cumulativeInvalid.length > 0;
-        break;
-      }
 
       const userMessage =
         cumulativeInvalid.length === 0
@@ -477,46 +456,20 @@ export async function mapAndValidateCode(input: {
         metrics: {
           phase: 'map',
           model: modelId,
+          provider: step.spec.provider,
+          reasoning: step.spec.reasoning,
           code: input.code,
           invalidIds: cumulativeInvalid,
         },
       });
 
-      let result: {
-        text: string;
-        usage: ReturnType<typeof pickUsage>;
-        mcp: { calls: number; toolNames: string[] };
-      };
-      try {
-        result = await runAgentAttempt({ modelId, system, userMessage, tools });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        const notFound =
-          modelId === FLASH_PREVIEW_MODEL && /model|not.found|unsupported/i.test(msg);
-        if (notFound && !flashFallbackTriggered) {
-          flashFallbackTriggered = true;
-          await logEvent({
-            runId: input.runId,
-            stage: input.stage,
-            level: 'warn',
-            message: `Flash preview unavailable — falling back to ${FLASH_FALLBACK_MODEL} for this run. (${msg})`,
-            metrics: { phase: 'map', model: modelId },
-          });
-          attempts -= 1; // retry with fallback on next ladder iteration; but we
-          // need to retry this same iteration — splice in a re-run:
-          const retry = await runAgentAttempt({
-            modelId: FLASH_FALLBACK_MODEL,
-            system,
-            userMessage,
-            tools,
-          });
-          result = retry;
-          lastModel = FLASH_FALLBACK_MODEL;
-          attempts += 1;
-        } else {
-          throw e;
-        }
-      }
+      const result = await runAgentAttempt({
+        spec: step.spec,
+        apiKeys: input.apiKeys,
+        system,
+        userMessage,
+        tools,
+      });
 
       const durationMs = Date.now() - started;
       let parsed: MappingOutput;
@@ -632,9 +585,4 @@ export async function mapAndValidateCode(input: {
       // non-fatal
     }
   }
-
-  // Unreachable — here to satisfy control-flow analysis if the compiler
-  // complains about `unresolved` set but never used (the ladder always
-  // returns or throws).
-  void unresolved;
 }
