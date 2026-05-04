@@ -7,13 +7,18 @@
  * needs, then pass the resulting `ProviderApiKeys` bag to the workflow
  * function.
  *
- * The route handler is responsible for the missing-key gate: if a needed
- * provider's key resolves to `undefined` here, the route should return
- * `409 { code: 'MISSING_API_KEY', provider }` BEFORE calling `start(...)`.
- * That gate lands in slice 6 of this feature; for now this helper just
- * returns whatever it found.
+ * Why two Convex calls per resolve?
+ * - `fetchQueryAsUser(users.getCurrentUser)` derives the userId from the
+ *   request's auth JWT (proves who the caller is).
+ * - `fetchQuery(apiKeys.getKeyForUserService, { _secret })` then reads the
+ *   raw key string. This second call uses `requireService` so it ONLY
+ *   accepts requests that present `WORKFLOW_SECRET` — the browser can't
+ *   obtain that env var, so even an XSS payload using the user's JWT
+ *   can't reach the key string. Without this split a `query` would be
+ *   callable from any authenticated client.
  */
 
+import { fetchQuery } from 'convex/nextjs';
 import { env } from '@/env';
 import { fetchQueryAsUser } from '@/lib/convex/server';
 import { api } from '../../../../convex/_generated/api';
@@ -29,12 +34,30 @@ export async function resolveApiKeysForRun(
   providers: readonly ProviderId[],
 ): Promise<ProviderApiKeys> {
   const result: ProviderApiKeys = {};
-  // Read per-user keys in parallel; each query is auth-gated to the calling
-  // user, so concurrent calls in the same request are safe.
+
+  // Identify the caller (JWT-authenticated). If unauthenticated we skip the
+  // per-user lookup and fall straight through to env — the route's existing
+  // `requireUserResponse` guard means we shouldn't get here without auth, but
+  // a defensive null-check costs nothing.
+  const user = await fetchQueryAsUser(api.users.getCurrentUser, {});
+  const userId = user?._id ?? null;
+
+  if (!env.WORKFLOW_SECRET || !userId) {
+    // No service secret configured (local dev) or no user — env fallback
+    // only. Per-user keys can't be read without the secret by design.
+    for (const p of providers) {
+      const fallback = ENV_BY_PROVIDER[p];
+      if (fallback) result[p] = fallback;
+    }
+    return result;
+  }
+
   const lookups = await Promise.all(
     providers.map(async (p) => {
-      const userKey = await fetchQueryAsUser(api.apiKeys.getOwnKeyForCurrentUser, {
+      const userKey = await fetchQuery(api.apiKeys.getKeyForUserService, {
+        userId,
         provider: p,
+        _secret: env.WORKFLOW_SECRET,
       });
       return [p, userKey] as const;
     }),
