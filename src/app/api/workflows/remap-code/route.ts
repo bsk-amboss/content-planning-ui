@@ -80,6 +80,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `code not found: ${code}` }, { status: 404 });
   }
 
+  // Resolve keys BEFORE clearing the existing mapping + creating the run, so a
+  // missing-key 409 doesn't wipe a working mapping.
+  const neededProviders = [...new Set([primaryModel.provider, backupModel.provider])];
+  const apiKeys = await resolveApiKeysForRun(neededProviders);
+  const missingProvider = neededProviders.find((p) => !apiKeys[p]);
+  if (missingProvider) {
+    return NextResponse.json(
+      {
+        error: `No API key configured for ${missingProvider}.`,
+        code: 'MISSING_API_KEY',
+        provider: missingProvider,
+      },
+      { status: 409 },
+    );
+  }
+
   await clearMappingForCode(slug, code);
 
   const checkAgainstLibrary = body.checkAgainstLibrary !== false;
@@ -98,10 +114,6 @@ export async function POST(req: NextRequest) {
     },
   });
   await fetchMutationAsUser(api.pipeline.initStage, { runId, stage: 'map_codes' });
-
-  const apiKeys = await resolveApiKeysForRun([
-    ...new Set([primaryModel.provider, backupModel.provider]),
-  ]);
 
   const wfRun = await start(mapCodesWorkflow, [
     {

@@ -15,8 +15,10 @@ import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import type { AmbossLibraryStats } from '@/lib/data/amboss-library';
 import type { CodeCategorySummary, UnmappedCodePickerRow } from '@/lib/data/codes';
+import type { ProviderId } from '@/lib/workflows/lib/llm';
 import { DEFAULT_MAPPING_SYSTEM_PROMPT } from '@/lib/workflows/lib/prompts';
 import { DefaultPromptModal } from './default-prompt-modal';
+import { MissingKeyModal } from './missing-key-modal';
 import {
   backupModelKey,
   DEFAULT_BACKUP_MODEL,
@@ -80,6 +82,7 @@ export function StartMapCodesForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ runId: string; token: string } | null>(null);
+  const [missingKey, setMissingKey] = useState<ProviderId | null>(null);
 
   const librarySeeded = libraryStats.articles > 0;
   const statsLine = librarySeeded
@@ -178,6 +181,16 @@ export function StartMapCodesForm({
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (
+          res.status === 409 &&
+          body?.code === 'MISSING_API_KEY' &&
+          (body.provider === 'google' ||
+            body.provider === 'anthropic' ||
+            body.provider === 'openai')
+        ) {
+          setMissingKey(body.provider);
+          return;
+        }
         setError(body?.error ?? `HTTP ${res.status}`);
         return;
       }
@@ -362,6 +375,11 @@ export function StartMapCodesForm({
         title="Mapping default system prompt"
         subHeader="Appended to any additional instructions you provide."
         text={DEFAULT_MAPPING_SYSTEM_PROMPT}
+      />
+      <MissingKeyModal
+        open={missingKey !== null}
+        provider={missingKey}
+        onClose={() => setMissingKey(null)}
       />
     </form>
   );

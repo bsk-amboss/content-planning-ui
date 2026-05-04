@@ -55,6 +55,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `specialty not found: ${slug}` }, { status: 404 });
   }
 
+  // Resolve keys BEFORE creating the run so a missing-key 409 doesn't leave a
+  // zombie pipelineRuns row.
+  const apiKeys = await resolveApiKeysForRun([model.provider]);
+  if (!apiKeys[model.provider]) {
+    return NextResponse.json(
+      {
+        error: `No API key configured for ${model.provider}.`,
+        code: 'MISSING_API_KEY',
+        provider: model.provider,
+      },
+      { status: 409 },
+    );
+  }
+
   const milestonesInstructions = body.milestonesInstructions?.trim() || null;
 
   const { id: runId } = await fetchMutationAsUser(api.pipeline.createRun, {
@@ -71,8 +85,6 @@ export async function POST(req: NextRequest) {
     runId,
     stage: 'extract_milestones',
   });
-
-  const apiKeys = await resolveApiKeysForRun([model.provider]);
 
   const wfRun = await start(extractMilestonesWorkflow, [
     {

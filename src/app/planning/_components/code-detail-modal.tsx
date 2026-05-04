@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { CodeRunMetadata } from '@/lib/data/code-run-metadata';
 import type { Code } from '@/lib/types';
+import type { ProviderId } from '@/lib/workflows/lib/llm';
+import { MissingKeyModal } from '../[specialty]/pipeline/_components/missing-key-modal';
 import {
   backupModelKey,
   DEFAULT_BACKUP_MODEL,
@@ -102,6 +104,7 @@ export function CodeDetailModal({
   const [activeTab, setActiveTab] = useState(targetToIndex(target));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [missingKey, setMissingKey] = useState<ProviderId | null>(null);
   const [metadata, setMetadata] = useState<CodeRunMetadata | null>(null);
   const [metadataState, setMetadataState] = useState<
     'idle' | 'loading' | 'loaded' | 'missing' | 'error'
@@ -227,6 +230,16 @@ export function CodeDetailModal({
       });
       if (!res.ok) {
         const resBody = await res.json().catch(() => ({}));
+        if (
+          res.status === 409 &&
+          resBody?.code === 'MISSING_API_KEY' &&
+          (resBody.provider === 'google' ||
+            resBody.provider === 'anthropic' ||
+            resBody.provider === 'openai')
+        ) {
+          setMissingKey(resBody.provider);
+          return;
+        }
         setError(resBody?.error ?? `HTTP ${res.status}`);
         return;
       }
@@ -345,6 +358,11 @@ export function CodeDetailModal({
           </Tabs>
         </Stack>
       </Modal.Stack>
+      <MissingKeyModal
+        open={missingKey !== null}
+        provider={missingKey}
+        onClose={() => setMissingKey(null)}
+      />
     </Modal>
   );
 }
